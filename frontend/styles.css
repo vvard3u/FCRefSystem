@@ -149,16 +149,38 @@ h3 {
   font-size: 15px;
 }
 
-.actor-select {
-  min-width: 240px;
+.auth-panel {
+  min-width: min(420px, 100%);
+}
+
+.login-form {
   display: grid;
-  gap: 6px;
+  grid-template-columns: minmax(110px, 1fr) minmax(110px, 1fr) auto;
+  gap: 8px;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.user-chip strong,
+.user-chip span {
+  display: block;
+  text-align: right;
+}
+
+.user-chip span {
+  margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
-.actor-select select,
+.login-form input,
+.actions input,
 .field select,
 .field input,
 .field textarea {
@@ -207,6 +229,46 @@ h3 {
   padding: 16px 18px;
 }
 
+.placeholder {
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.placeholder strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.placeholder p:last-child {
+  margin-bottom: 0;
+}
+
+.credential-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  border: 1px solid #a7d7bd;
+  border-radius: 8px;
+  background: #ecfdf3;
+  padding: 14px;
+}
+
+.credential-card span {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.credential-card code {
+  width: fit-content;
+  border: 1px solid #a7d7bd;
+  border-radius: 6px;
+  background: #fff;
+  padding: 5px 8px;
+}
+
 .metric {
   display: grid;
   gap: 6px;
@@ -239,6 +301,10 @@ h3 {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.toolbar {
+  margin-top: 16px;
 }
 
 .btn {
@@ -473,8 +539,24 @@ tr:last-child td {
     flex-direction: column;
   }
 
-  .actor-select {
+  .auth-panel {
     min-width: 0;
+  }
+
+  .login-form,
+  .user-chip {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .user-chip {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .user-chip strong,
+  .user-chip span {
+    text-align: left;
   }
 
   .content {
