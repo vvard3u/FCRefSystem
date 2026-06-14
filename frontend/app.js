@@ -101,6 +101,7 @@ async function request(path, options = {}) {
     try {
       error = await response.json();
     } catch (ignored) {
+      error = { message: response.statusText };
     }
     throw error;
   }

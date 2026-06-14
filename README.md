@@ -62,9 +62,12 @@ mvn test
 
 ```bash
 mvn -pl backend checkstyle:check
+cd frontend
+npm ci
+npm run lint
 ```
 
-Backend lint uses Checkstyle and checks Java sources plus backend tests.
+Backend lint uses Checkstyle and checks Java sources plus backend tests. Frontend lint uses ESLint, Stylelint and HTMLHint.
 
 ## Demo users
 
