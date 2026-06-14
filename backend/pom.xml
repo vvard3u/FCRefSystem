@@ -65,6 +65,13 @@
             <resource>
                 <directory>${project.basedir}/../frontend</directory>
                 <targetPath>static</targetPath>
+                <excludes>
+                    <exclude>node_modules/**</exclude>
+                    <exclude>package.json</exclude>
+                    <exclude>package-lock.json</exclude>
+                    <exclude>eslint.config.mjs</exclude>
+                    <exclude>.htmlhintrc</exclude>
+                </excludes>
             </resource>
         </resources>
         <plugins>

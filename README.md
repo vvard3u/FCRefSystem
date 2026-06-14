@@ -22,9 +22,11 @@
 ## Run
 
 ```bash
-mvn package
+./mvnw package
 java -jar backend/target/fc-ref-system-0.1.0-SNAPSHOT.jar
 ```
+
+On Windows PowerShell use `.\mvnw.cmd` instead of `./mvnw`.
 
 After startup:
 
@@ -69,7 +71,7 @@ Other screens are intentionally minimal and use interface placeholders where the
 ## Test
 
 ```bash
-mvn test
+./mvnw test
 ```
 
 Tests cover domain rules, Basic Auth API access, seeded MVP state and public invitation activation.
@@ -77,7 +79,7 @@ Tests cover domain rules, Basic Auth API access, seeded MVP state and public inv
 ## Lint
 
 ```bash
-mvn -pl backend checkstyle:check
+./mvnw -pl backend checkstyle:check
 cd frontend
 npm ci
 npm run lint
