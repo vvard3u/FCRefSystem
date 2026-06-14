@@ -69,6 +69,10 @@ npm run lint
 
 Backend lint uses Checkstyle and checks Java sources plus backend tests. Frontend lint uses ESLint, Stylelint and HTMLHint.
 
+## CI
+
+GitHub Actions workflow `.github/workflows/ci.yml` runs backend Checkstyle, backend tests, backend package build and frontend lint.
+
 ## Demo users
 
 - `member-1` - участник, создает приглашения;
