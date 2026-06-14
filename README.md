@@ -2,18 +2,6 @@
 
 Минимальная версия внутренней системы отбора кандидатов в закрытое сообщество.
 
-## MVP scope
-
-MVP реализует сквозной каркас для ключевых UC из SRS и figma-прототипа:
-
-- UC-01: создание реферального приглашения;
-- UC-02: создание регламента отбора;
-- UC-03: голосование за кандидата;
-- UC-04: блокировка кандидата;
-- UC-05: прохождение этапа отбора.
-
-Первая реализация использует in-memory хранилище, чтобы зафиксировать бизнес-правила и интерфейс без зависимости от локальной PostgreSQL. Целевая БД по SRS - PostgreSQL 16.
-
 ## Stack
 
 - Java 17;
@@ -29,16 +17,6 @@ MVP реализует сквозной каркас для ключевых UC 
 - `tests/backend/` - backend unit and API tests.
 - `figma/` - Figma prototype plugin sources.
 - source PDF documents are local-only and ignored by Git.
-
-## Local Source Documents
-
-The original project PDFs are not stored in the repository. Keep them locally in the workspace root when analysis is needed:
-
-- `SRS_Boytsovskiy_Klub_corrected.pdf`
-- `SDP_filled_Boytsovskiy_Klub.pdf`
-- `BusinessCase_template.docx.pdf`
-- `RiskList_Boytsovskiy_Klub.pdf`
-- `Glossary_Boytsovskiy_Klub.pdf`
 
 ## Run
 
