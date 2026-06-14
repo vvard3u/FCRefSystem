@@ -32,6 +32,8 @@ mvn spring-boot:run
 
 - UI: `http://localhost:8080/`
 - health: `http://localhost:8080/actuator/health`
+- API snapshot: `http://localhost:8080/api/snapshot`
+- OpenAPI: `http://localhost:8080/openapi.yaml`
 
 Порт можно изменить переменной окружения:
 
@@ -44,3 +46,11 @@ PORT=8090 mvn spring-boot:run
 ```bash
 mvn test
 ```
+
+## Demo users
+
+- `member-1` - участник, создает приглашения;
+- `admin-1` - администратор, управляет регламентом и голосованием;
+- `privileged-1` - участник с привилегиями, голосует и подает жалобы;
+- `interviewer-1` - интервьюер, блокирует кандидата и фиксирует вердикт;
+- `candidate-user-1` - кандидат, отправляет результат этапа.
