@@ -524,9 +524,16 @@ public class SelectionService {
         candidate.setStatus(nextStage.type() == StageType.VOTE ? CandidateStatus.VOTING : CandidateStatus.IN_PROGRESS);
         event(EventType.STAGE_ASSIGNED, actorUserId, candidate.getId(), nextStage.id(), Map.of("stageName", nextStage.name()));
         if (nextStage.type() == StageType.VOTE && candidate.openVotingSession().isEmpty()) {
-            VotingSession session = createVotingSession(actorUserId, nextStage.thresholdPercent() != null ? nextStage.thresholdPercent() : 60);
+            int thresholdPercent = nextStage.thresholdPercent() != null ? nextStage.thresholdPercent() : 60;
+            VotingSession session = createVotingSession(actorUserId, thresholdPercent);
             candidate.getVotingSessions().add(session);
-            event(EventType.VOTE_OPENED, actorUserId, candidate.getId(), session.getId(), Map.of("thresholdPercent", session.getThresholdPercent()));
+            event(
+                    EventType.VOTE_OPENED,
+                    actorUserId,
+                    candidate.getId(),
+                    session.getId(),
+                    Map.of("thresholdPercent", session.getThresholdPercent())
+            );
         }
     }
 

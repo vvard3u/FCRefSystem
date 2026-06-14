@@ -58,6 +58,14 @@ mvn test
 
 Тесты проверяют доменные правила UC и базовый HTTP-контур `/api`.
 
+## Lint
+
+```bash
+mvn -pl backend checkstyle:check
+```
+
+Backend lint uses Checkstyle and checks Java sources plus backend tests.
+
 ## Demo users
 
 - `member-1` - участник, создает приглашения;
