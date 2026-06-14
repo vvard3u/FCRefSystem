@@ -6,17 +6,27 @@ import java.util.Set;
 public class UserAccount {
 
     private final String id;
+    private final String username;
     private final String displayName;
     private final Set<Role> roles;
 
     public UserAccount(String id, String displayName, Set<Role> roles) {
+        this(id, id, displayName, roles);
+    }
+
+    public UserAccount(String id, String username, String displayName, Set<Role> roles) {
         this.id = id;
+        this.username = username;
         this.displayName = displayName;
-        this.roles = EnumSet.copyOf(roles);
+        this.roles = roles.isEmpty() ? EnumSet.noneOf(Role.class) : EnumSet.copyOf(roles);
     }
 
     public String getId() {
         return id;
+    }
+
+    public String getUsername() {
+        return username;
     }
 
     public String getDisplayName() {

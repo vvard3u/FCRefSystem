@@ -1,16 +1,16 @@
 package ru.fcref.system.api;
 
 import java.util.List;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import ru.fcref.system.domain.ActivationResult;
 import ru.fcref.system.domain.BlockRecord;
-import ru.fcref.system.domain.Candidate;
 import ru.fcref.system.domain.Complaint;
 import ru.fcref.system.domain.Invitation;
 import ru.fcref.system.domain.Role;
@@ -22,6 +22,7 @@ import ru.fcref.system.domain.Verdict;
 import ru.fcref.system.domain.Vote;
 import ru.fcref.system.domain.VoteChoice;
 import ru.fcref.system.domain.VotingSession;
+import ru.fcref.system.service.CurrentUserService;
 import ru.fcref.system.service.SelectionService;
 import ru.fcref.system.service.SelectionSnapshot;
 
@@ -30,9 +31,16 @@ import ru.fcref.system.service.SelectionSnapshot;
 public class SelectionController {
 
     private final SelectionService service;
+    private final CurrentUserService currentUserService;
 
-    public SelectionController(SelectionService service) {
+    public SelectionController(SelectionService service, CurrentUserService currentUserService) {
         this.service = service;
+        this.currentUserService = currentUserService;
+    }
+
+    @GetMapping("/session")
+    public UserAccount session(Authentication authentication) {
+        return currentUserService.requireCurrent(authentication);
     }
 
     @GetMapping("/snapshot")
@@ -41,136 +49,146 @@ public class SelectionController {
     }
 
     @PostMapping("/invitations")
-    public Invitation createInvitation(@RequestBody CreateInvitationRequest request) {
-        return service.createInvitation(request.actorUserId(), request.comment(), request.requestId());
+    public Invitation createInvitation(@RequestBody CreateInvitationRequest request, Authentication authentication) {
+        return service.createInvitation(actorUserId(authentication), request.comment(), request.requestId());
     }
 
     @PostMapping("/invitations/activate")
-    public Candidate activateInvitation(@RequestBody ActivateInvitationRequest request) {
+    public ActivationResult activateInvitation(@RequestBody ActivateInvitationRequest request) {
         return service.activateInvitation(request.token(), request.fullName());
     }
 
     @PostMapping("/regulations")
-    public SelectionRegulation createRegulation(@RequestBody CreateRegulationRequest request) {
-        return service.createRegulation(request.actorUserId(), request.name(), request.description(), request.stages());
+    public SelectionRegulation createRegulation(
+            @RequestBody CreateRegulationRequest request,
+            Authentication authentication
+    ) {
+        return service.createRegulation(actorUserId(authentication), request.name(), request.description(), request.stages());
     }
 
     @PostMapping("/candidates/{candidateId}/stage-results")
     public StageProgress submitStageResult(
             @PathVariable String candidateId,
-            @RequestBody SubmitStageResultRequest request
+            @RequestBody SubmitStageResultRequest request,
+            Authentication authentication
     ) {
-        return service.submitStageResult(request.actorUserId(), candidateId, request.result(), request.requestId());
+        return service.submitStageResult(actorUserId(authentication), candidateId, request.result(), request.requestId());
     }
 
     @PostMapping("/candidates/{candidateId}/verdicts")
     public StageProgress recordVerdict(
             @PathVariable String candidateId,
-            @RequestBody RecordVerdictRequest request
+            @RequestBody RecordVerdictRequest request,
+            Authentication authentication
     ) {
-        return service.recordVerdict(request.actorUserId(), candidateId, request.verdict(), request.report());
+        return service.recordVerdict(actorUserId(authentication), candidateId, request.verdict(), request.report());
     }
 
     @PostMapping("/candidates/{candidateId}/voting")
     public VotingSession openVote(
             @PathVariable String candidateId,
-            @RequestBody ActorRequest request
+            Authentication authentication
     ) {
-        return service.openVote(request.actorUserId(), candidateId);
+        return service.openVote(actorUserId(authentication), candidateId);
     }
 
     @PostMapping("/candidates/{candidateId}/votes")
     public Vote castVote(
             @PathVariable String candidateId,
-            @RequestBody CastVoteRequest request
+            @RequestBody CastVoteRequest request,
+            Authentication authentication
     ) {
-        return service.castVote(request.actorUserId(), candidateId, request.choice(), request.reason());
+        return service.castVote(actorUserId(authentication), candidateId, request.choice(), request.reason());
     }
 
     @PostMapping("/candidates/{candidateId}/voting/close")
     public VotingSession closeVote(
             @PathVariable String candidateId,
-            @RequestBody ActorRequest request
+            Authentication authentication
     ) {
-        return service.closeVote(request.actorUserId(), candidateId);
+        return service.closeVote(actorUserId(authentication), candidateId);
     }
 
     @PostMapping("/candidates/{candidateId}/complaints")
     public Complaint createComplaint(
             @PathVariable String candidateId,
-            @RequestBody ComplaintRequest request
+            @RequestBody ComplaintRequest request,
+            Authentication authentication
     ) {
-        return service.createComplaint(request.actorUserId(), candidateId, request.reason());
+        return service.createComplaint(actorUserId(authentication), candidateId, request.reason());
     }
 
     @PostMapping("/candidates/{candidateId}/blocks")
     public BlockRecord blockCandidate(
             @PathVariable String candidateId,
-            @RequestBody BlockCandidateRequest request
+            @RequestBody BlockCandidateRequest request,
+            Authentication authentication
     ) {
-        return service.blockCandidate(request.actorUserId(), candidateId, request.category(), request.reason());
+        return service.blockCandidate(actorUserId(authentication), candidateId, request.category(), request.reason());
     }
 
     @PostMapping("/candidates/{candidateId}/unblock")
     public BlockRecord unblockCandidate(
             @PathVariable String candidateId,
-            @RequestBody UnblockCandidateRequest request
+            @RequestBody UnblockCandidateRequest request,
+            Authentication authentication
     ) {
-        return service.unblockCandidate(request.actorUserId(), candidateId, request.reason());
+        return service.unblockCandidate(actorUserId(authentication), candidateId, request.reason());
     }
 
     @PostMapping("/users/{userId}/roles")
     public UserAccount assignRole(
             @PathVariable String userId,
-            @RequestBody RoleChangeRequest request
+            @RequestBody RoleChangeRequest request,
+            Authentication authentication
     ) {
-        return service.assignRole(request.actorUserId(), userId, request.role());
+        return service.assignRole(actorUserId(authentication), userId, request.role());
     }
 
     @DeleteMapping("/users/{userId}/roles/{role}")
     public UserAccount revokeRole(
             @PathVariable String userId,
             @PathVariable Role role,
-            @RequestParam String actorUserId
+            Authentication authentication
     ) {
-        return service.revokeRole(actorUserId, userId, role);
+        return service.revokeRole(actorUserId(authentication), userId, role);
     }
 
-    public record ActorRequest(String actorUserId) {
+    private String actorUserId(Authentication authentication) {
+        return currentUserService.requireCurrent(authentication).getId();
     }
 
-    public record CreateInvitationRequest(String actorUserId, String comment, String requestId) {
+    public record CreateInvitationRequest(String comment, String requestId) {
     }
 
     public record ActivateInvitationRequest(String token, String fullName) {
     }
 
     public record CreateRegulationRequest(
-            String actorUserId,
             String name,
             String description,
             List<SelectionStage> stages
     ) {
     }
 
-    public record SubmitStageResultRequest(String actorUserId, String result, String requestId) {
+    public record SubmitStageResultRequest(String result, String requestId) {
     }
 
-    public record RecordVerdictRequest(String actorUserId, Verdict verdict, String report) {
+    public record RecordVerdictRequest(Verdict verdict, String report) {
     }
 
-    public record CastVoteRequest(String actorUserId, VoteChoice choice, String reason) {
+    public record CastVoteRequest(VoteChoice choice, String reason) {
     }
 
-    public record ComplaintRequest(String actorUserId, String reason) {
+    public record ComplaintRequest(String reason) {
     }
 
-    public record BlockCandidateRequest(String actorUserId, String category, String reason) {
+    public record BlockCandidateRequest(String category, String reason) {
     }
 
-    public record UnblockCandidateRequest(String actorUserId, String reason) {
+    public record UnblockCandidateRequest(String reason) {
     }
 
-    public record RoleChangeRequest(String actorUserId, Role role) {
+    public record RoleChangeRequest(Role role) {
     }
 }

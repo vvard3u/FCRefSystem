@@ -9,6 +9,7 @@ public class Candidate {
 
     private final String id;
     private final String fullName;
+    private final String candidateUserId;
     private final String invitationId;
     private final String invitedByUserId;
     private final Instant registeredAt;
@@ -28,8 +29,22 @@ public class Candidate {
             CandidateStatus status,
             String currentStageId
     ) {
+        this(id, fullName, null, invitationId, invitedByUserId, registeredAt, status, currentStageId);
+    }
+
+    public Candidate(
+            String id,
+            String fullName,
+            String candidateUserId,
+            String invitationId,
+            String invitedByUserId,
+            Instant registeredAt,
+            CandidateStatus status,
+            String currentStageId
+    ) {
         this.id = id;
         this.fullName = fullName;
+        this.candidateUserId = candidateUserId;
         this.invitationId = invitationId;
         this.invitedByUserId = invitedByUserId;
         this.registeredAt = registeredAt;
@@ -43,6 +58,10 @@ public class Candidate {
 
     public String getFullName() {
         return fullName;
+    }
+
+    public String getCandidateUserId() {
+        return candidateUserId;
     }
 
     public String getInvitationId() {
