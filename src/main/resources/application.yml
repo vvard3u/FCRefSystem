@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: fc-ref-system
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  invitation-ttl-days: ${INVITATION_TTL_DAYS:30}
+  member-invitation-quota: ${MEMBER_INVITATION_QUOTA:3}
