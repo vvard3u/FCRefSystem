@@ -5,13 +5,25 @@ info:
   description: REST API for referral candidate selection MVP.
 servers:
   - url: http://localhost:8080
+security:
+  - basicAuth: []
 paths:
+  /api/session:
+    get:
+      summary: Current authenticated user
+      responses:
+        "200":
+          description: User account and roles.
+        "401":
+          description: Basic Auth credentials are missing or invalid.
   /api/snapshot:
     get:
       summary: Current MVP state
       responses:
         "200":
           description: Users, invitations, candidates, regulations and event log.
+        "401":
+          description: Basic Auth credentials are missing or invalid.
   /api/invitations:
     post:
       summary: UC-01 Create referral invitation
@@ -23,27 +35,24 @@ paths:
               $ref: "#/components/schemas/CreateInvitationRequest"
       responses:
         "200":
-          description: Invitation created.
+          description: Invitation created by current MEMBER.
+        "403":
+          description: Current user is not an active club member.
         "409":
           description: Quota exhausted or business rule failed.
   /api/invitations/activate:
     post:
+      security: []
       summary: Activate invitation and register candidate
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [token, fullName]
-              properties:
-                token:
-                  type: string
-                fullName:
-                  type: string
+              $ref: "#/components/schemas/ActivateInvitationRequest"
       responses:
         "200":
-          description: Candidate created.
+          description: Candidate created and Basic Auth credentials issued.
   /api/regulations:
     post:
       summary: UC-02 Create active selection regulation
@@ -55,7 +64,9 @@ paths:
               $ref: "#/components/schemas/CreateRegulationRequest"
       responses:
         "200":
-          description: Active regulation created.
+          description: Active regulation created by current ADMIN.
+        "403":
+          description: Current user is not an administrator.
   /api/candidates/{candidateId}/stage-results:
     post:
       summary: UC-05 Submit current stage result
@@ -66,18 +77,10 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [actorUserId, result]
-              properties:
-                actorUserId:
-                  type: string
-                result:
-                  type: string
-                requestId:
-                  type: string
+              $ref: "#/components/schemas/SubmitStageResultRequest"
       responses:
         "200":
-          description: Stage result saved.
+          description: Stage result saved by candidate owner or ADMIN.
   /api/candidates/{candidateId}/verdicts:
     post:
       summary: Record stage verdict
@@ -88,29 +91,18 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [actorUserId, verdict, report]
-              properties:
-                actorUserId:
-                  type: string
-                verdict:
-                  type: string
-                  enum: [PASSED, FAILED, RETRY]
-                report:
-                  type: string
+              $ref: "#/components/schemas/RecordVerdictRequest"
       responses:
         "200":
-          description: Verdict saved.
+          description: Verdict saved by INTERVIEWER or ADMIN.
   /api/candidates/{candidateId}/voting:
     post:
       summary: Open voting
       parameters:
         - $ref: "#/components/parameters/CandidateId"
-      requestBody:
-        $ref: "#/components/requestBodies/Actor"
       responses:
         "200":
-          description: Voting session opened.
+          description: Voting session opened by ADMIN.
   /api/candidates/{candidateId}/votes:
     post:
       summary: UC-03 Cast vote
@@ -121,29 +113,18 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [actorUserId, choice, reason]
-              properties:
-                actorUserId:
-                  type: string
-                choice:
-                  type: string
-                  enum: [SUPPORT, REJECT]
-                reason:
-                  type: string
+              $ref: "#/components/schemas/CastVoteRequest"
       responses:
         "200":
-          description: Vote accepted.
+          description: Vote accepted from current PRIVILEGED_MEMBER.
   /api/candidates/{candidateId}/voting/close:
     post:
       summary: Close voting and calculate result
       parameters:
         - $ref: "#/components/parameters/CandidateId"
-      requestBody:
-        $ref: "#/components/requestBodies/Actor"
       responses:
         "200":
-          description: Voting closed.
+          description: Voting closed by ADMIN.
   /api/candidates/{candidateId}/complaints:
     post:
       summary: Create complaint for candidate
@@ -154,16 +135,10 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [actorUserId, reason]
-              properties:
-                actorUserId:
-                  type: string
-                reason:
-                  type: string
+              $ref: "#/components/schemas/ComplaintRequest"
       responses:
         "200":
-          description: Complaint saved.
+          description: Complaint saved by current PRIVILEGED_MEMBER.
   /api/candidates/{candidateId}/blocks:
     post:
       summary: UC-04 Block candidate
@@ -174,19 +149,15 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [actorUserId, category, reason]
-              properties:
-                actorUserId:
-                  type: string
-                category:
-                  type: string
-                reason:
-                  type: string
+              $ref: "#/components/schemas/BlockCandidateRequest"
       responses:
         "200":
-          description: Candidate blocked.
+          description: Candidate blocked by INTERVIEWER or ADMIN.
 components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
   parameters:
     CandidateId:
       name: candidateId
@@ -194,34 +165,26 @@ components:
       required: true
       schema:
         type: string
-  requestBodies:
-    Actor:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [actorUserId]
-            properties:
-              actorUserId:
-                type: string
   schemas:
     CreateInvitationRequest:
       type: object
-      required: [actorUserId]
       properties:
-        actorUserId:
-          type: string
         comment:
           type: string
         requestId:
           type: string
+    ActivateInvitationRequest:
+      type: object
+      required: [token, fullName]
+      properties:
+        token:
+          type: string
+        fullName:
+          type: string
     CreateRegulationRequest:
       type: object
-      required: [actorUserId, name, stages]
+      required: [name, stages]
       properties:
-        actorUserId:
-          type: string
         name:
           type: string
         description:
@@ -229,26 +192,68 @@ components:
         stages:
           type: array
           items:
-            type: object
-            required: [id, name, type, attemptLimit, dueDays, requiresSubmission]
-            properties:
-              id:
-                type: string
-              name:
-                type: string
-              type:
-                type: string
-                enum: [FORM, TASK, INTERVIEW, VOTE]
-              attemptLimit:
-                type: integer
-                minimum: 1
-              dueDays:
-                type: integer
-                minimum: 1
-              thresholdPercent:
-                type: integer
-                nullable: true
-              criteria:
-                type: string
-              requiresSubmission:
-                type: boolean
+            $ref: "#/components/schemas/SelectionStage"
+    SubmitStageResultRequest:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+        requestId:
+          type: string
+    RecordVerdictRequest:
+      type: object
+      required: [verdict, report]
+      properties:
+        verdict:
+          type: string
+          enum: [PASSED, FAILED, RETRY]
+        report:
+          type: string
+    CastVoteRequest:
+      type: object
+      required: [choice, reason]
+      properties:
+        choice:
+          type: string
+          enum: [SUPPORT, REJECT]
+        reason:
+          type: string
+    ComplaintRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+    BlockCandidateRequest:
+      type: object
+      required: [category, reason]
+      properties:
+        category:
+          type: string
+        reason:
+          type: string
+    SelectionStage:
+      type: object
+      required: [id, name, type, attemptLimit, dueDays, requiresSubmission]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [FORM, TASK, INTERVIEW, VOTE]
+        attemptLimit:
+          type: integer
+          minimum: 1
+        dueDays:
+          type: integer
+          minimum: 1
+        thresholdPercent:
+          type: integer
+          nullable: true
+        criteria:
+          type: string
+        requiresSubmission:
+          type: boolean

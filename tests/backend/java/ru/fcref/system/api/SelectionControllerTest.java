@@ -6,10 +6,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -20,12 +23,21 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class SelectionControllerTest {
 
+    private static final String MEMBER_AUTH = basic("member", "member");
+    private static final String PRIVILEGED_AUTH = basic("privileged", "privileged");
+
     @Autowired
     private MockMvc mockMvc;
 
     @Test
-    void snapshotReturnsSeededMvpState() throws Exception {
+    void protectedApiRequiresBasicAuth() throws Exception {
         mockMvc.perform(get("/api/snapshot"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void snapshotReturnsSeededMvpStateForAuthenticatedUser() throws Exception {
+        mockMvc.perform(get("/api/snapshot").header(HttpHeaders.AUTHORIZATION, MEMBER_AUTH))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.users").isArray())
                 .andExpect(jsonPath("$.candidates").isArray())
@@ -33,12 +45,20 @@ class SelectionControllerTest {
     }
 
     @Test
+    void sessionReturnsAuthenticatedUser() throws Exception {
+        mockMvc.perform(get("/api/session").header(HttpHeaders.AUTHORIZATION, MEMBER_AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("member"))
+                .andExpect(jsonPath("$.roles[0]").value("MEMBER"));
+    }
+
+    @Test
     void memberCanCreateInvitationThroughApi() throws Exception {
         mockMvc.perform(post("/api/invitations")
+                        .header(HttpHeaders.AUTHORIZATION, MEMBER_AUTH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "actorUserId": "member-1",
                                   "comment": "API test invitation",
                                   "requestId": "api-test-invitation"
                                 }
@@ -49,17 +69,53 @@ class SelectionControllerTest {
     }
 
     @Test
-    void apiMapsBusinessRuleToConflict() throws Exception {
-        mockMvc.perform(post("/api/candidates/candidate-vote/votes")
+    void publicActivationCreatesCandidateCredentials() throws Exception {
+        mockMvc.perform(post("/api/invitations/activate")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "actorUserId": "member-1",
+                                  "token": "bk-seed-active",
+                                  "fullName": "Public Candidate"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidate.status").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.username", notNullValue()))
+                .andExpect(jsonPath("$.password", notNullValue()));
+    }
+
+    @Test
+    void apiMapsBusinessRuleToForbidden() throws Exception {
+        mockMvc.perform(post("/api/candidates/candidate-vote/votes")
+                        .header(HttpHeaders.AUTHORIZATION, MEMBER_AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
                                   "choice": "SUPPORT",
                                   "reason": "member has no privileged role"
                                 }
                                 """))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+    }
+
+    @Test
+    void privilegedMemberCanVoteThroughApi() throws Exception {
+        mockMvc.perform(post("/api/candidates/candidate-vote/votes")
+                        .header(HttpHeaders.AUTHORIZATION, PRIVILEGED_AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "choice": "SUPPORT",
+                                  "reason": "candidate meets voting criteria"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.choice").value("SUPPORT"));
+    }
+
+    private static String basic(String username, String password) {
+        String credentials = username + ":" + password;
+        return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
     }
 }

@@ -33,7 +33,20 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <dependency>
@@ -52,6 +65,13 @@
             <resource>
                 <directory>${project.basedir}/../frontend</directory>
                 <targetPath>static</targetPath>
+                <excludes>
+                    <exclude>node_modules/**</exclude>
+                    <exclude>package.json</exclude>
+                    <exclude>package-lock.json</exclude>
+                    <exclude>eslint.config.mjs</exclude>
+                    <exclude>.htmlhintrc</exclude>
+                </excludes>
             </resource>
         </resources>
         <plugins>

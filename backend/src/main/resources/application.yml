@@ -1,6 +1,17 @@
 spring:
   application:
     name: fc-ref-system
+  datasource:
+    url: jdbc:h2:mem:fcref;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: false
+  sql:
+    init:
+      mode: always
 
 debug: false
 

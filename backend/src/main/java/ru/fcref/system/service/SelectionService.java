@@ -1,9 +1,11 @@
 package ru.fcref.system.service;
 
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -14,6 +16,7 @@ import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import ru.fcref.system.config.AppProperties;
+import ru.fcref.system.domain.ActivationResult;
 import ru.fcref.system.domain.BlockRecord;
 import ru.fcref.system.domain.Candidate;
 import ru.fcref.system.domain.CandidateStatus;
@@ -39,7 +42,8 @@ public class SelectionService {
 
     private final AppProperties properties;
     private final Clock clock;
-    private final Map<String, UserAccount> users = new LinkedHashMap<>();
+    private final UserDirectory userDirectory;
+    private final SecureRandom secureRandom = new SecureRandom();
     private final Map<String, Invitation> invitations = new LinkedHashMap<>();
     private final Map<String, Candidate> candidates = new LinkedHashMap<>();
     private final Map<String, SelectionRegulation> regulations = new LinkedHashMap<>();
@@ -56,19 +60,20 @@ public class SelectionService {
     private int votingSessionSequence = 100;
 
     @Autowired
-    public SelectionService(AppProperties properties) {
-        this(properties, Clock.systemUTC());
+    public SelectionService(AppProperties properties, UserDirectory userDirectory) {
+        this(properties, userDirectory, Clock.systemUTC());
     }
 
-    public SelectionService(AppProperties properties, Clock clock) {
+    public SelectionService(AppProperties properties, UserDirectory userDirectory, Clock clock) {
         this.properties = properties;
+        this.userDirectory = userDirectory;
         this.clock = clock;
         seed();
     }
 
     public synchronized SelectionSnapshot snapshot() {
         return new SelectionSnapshot(
-                List.copyOf(users.values()),
+                userDirectory.listUsers(),
                 List.copyOf(invitations.values()),
                 List.copyOf(candidates.values()),
                 List.copyOf(regulations.values()),
@@ -79,7 +84,7 @@ public class SelectionService {
     }
 
     public synchronized Invitation createInvitation(String actorUserId, String comment, String requestId) {
-        UserAccount actor = requireAnyRole(actorUserId, Role.MEMBER, Role.ADMIN);
+        UserAccount actor = requireRole(actorUserId, Role.MEMBER);
         if (requestId != null && !requestId.isBlank()) {
             String key = "invitation:" + actor.getId() + ":" + requestId;
             String existingId = idempotencyIndex.get(key);
@@ -115,7 +120,7 @@ public class SelectionService {
         return invitation;
     }
 
-    public synchronized Candidate activateInvitation(String token, String fullName) {
+    public synchronized ActivationResult activateInvitation(String token, String fullName) {
         Invitation invitation = invitations.values().stream()
                 .filter(value -> value.getToken().equals(token))
                 .findFirst()
@@ -133,9 +138,21 @@ public class SelectionService {
         SelectionRegulation regulation = activeRegulation();
         SelectionStage firstStage = regulation.getStages().get(0);
         candidateSequence++;
-        Candidate candidate = new Candidate(
-                "candidate-" + candidateSequence,
+        String candidateId = "candidate-" + candidateSequence;
+        String candidateUserId = "candidate-user-" + candidateSequence;
+        String candidateUsername = "candidate" + candidateSequence;
+        String candidatePassword = generatePassword();
+        UserAccount account = userDirectory.createUser(
+                candidateUserId,
+                candidateUsername,
+                candidatePassword,
                 fullName.trim(),
+                EnumSet.of(Role.CANDIDATE)
+        );
+        Candidate candidate = new Candidate(
+                candidateId,
+                fullName.trim(),
+                account.getId(),
                 invitation.getId(),
                 invitation.getAuthorUserId(),
                 now,
@@ -149,7 +166,7 @@ public class SelectionService {
         event(EventType.INVITATION_ACTIVATED, null, candidate.getId(), invitation.getId(), Map.of("token", token));
         event(EventType.CANDIDATE_REGISTERED, null, candidate.getId(), candidate.getId(), Map.of("fullName", candidate.getFullName()));
         event(EventType.STAGE_ASSIGNED, null, candidate.getId(), firstStage.id(), Map.of("stageName", firstStage.name()));
-        return candidate;
+        return new ActivationResult(candidate, candidateUsername, candidatePassword);
     }
 
     public synchronized SelectionRegulation createRegulation(
@@ -185,9 +202,10 @@ public class SelectionService {
     }
 
     public synchronized StageProgress submitStageResult(String actorUserId, String candidateId, String result, String requestId) {
-        requireAnyRole(actorUserId, Role.CANDIDATE, Role.ADMIN);
+        UserAccount actor = requireAnyRole(actorUserId, Role.CANDIDATE, Role.ADMIN);
         requireText(result, "result", "Результат этапа обязателен");
         Candidate candidate = requireCandidate(candidateId);
+        ensureCandidateOwnsRecord(actor, candidate);
         ensureCandidateCanMove(candidate);
         StageProgress current = requireCurrentStage(candidate);
         SelectionStage stage = requireActiveStage(current.getStageId());
@@ -210,7 +228,7 @@ public class SelectionService {
         current.submit(result.trim(), now());
         event(
                 EventType.STAGE_RESULT_SUBMITTED,
-                actorUserId,
+                actor.getId(),
                 candidate.getId(),
                 current.getId(),
                 Map.of("stageName", current.getStageName(), "attempt", current.getAttemptNumber())
@@ -375,8 +393,7 @@ public class SelectionService {
     public synchronized UserAccount assignRole(String actorUserId, String targetUserId, Role role) {
         requireRole(actorUserId, Role.ADMIN);
         Objects.requireNonNull(role, "role");
-        UserAccount target = requireUser(targetUserId);
-        target.assignRole(role);
+        UserAccount target = userDirectory.assignRole(targetUserId, role);
         event(EventType.ROLE_ASSIGNED, actorUserId, null, target.getId(), Map.of("role", role.name()));
         return target;
     }
@@ -384,19 +401,12 @@ public class SelectionService {
     public synchronized UserAccount revokeRole(String actorUserId, String targetUserId, Role role) {
         requireRole(actorUserId, Role.ADMIN);
         Objects.requireNonNull(role, "role");
-        UserAccount target = requireUser(targetUserId);
-        target.revokeRole(role);
+        UserAccount target = userDirectory.revokeRole(targetUserId, role);
         event(EventType.ROLE_REVOKED, actorUserId, null, target.getId(), Map.of("role", role.name()));
         return target;
     }
 
     private void seed() {
-        users.put("admin-1", new UserAccount("admin-1", "Администратор", EnumSet.of(Role.ADMIN)));
-        users.put("member-1", new UserAccount("member-1", "Иванова А. С.", EnumSet.of(Role.MEMBER)));
-        users.put("privileged-1", new UserAccount("privileged-1", "Петров П. П.", EnumSet.of(Role.PRIVILEGED_MEMBER)));
-        users.put("interviewer-1", new UserAccount("interviewer-1", "Интервьюер", EnumSet.of(Role.INTERVIEWER)));
-        users.put("candidate-user-1", new UserAccount("candidate-user-1", "Кандидат", EnumSet.of(Role.CANDIDATE)));
-
         SelectionRegulation defaultRegulation = new SelectionRegulation(
                 "reg-1",
                 "Регламент вступления в закрытое сообщество",
@@ -443,6 +453,7 @@ public class SelectionService {
         Candidate candidate = new Candidate(
                 id,
                 fullName,
+                "candidate-user-1",
                 invitationId,
                 "member-1",
                 now().minus(3, ChronoUnit.DAYS),
@@ -572,6 +583,15 @@ public class SelectionService {
         }
     }
 
+    private void ensureCandidateOwnsRecord(UserAccount actor, Candidate candidate) {
+        if (actor.hasRole(Role.ADMIN)) {
+            return;
+        }
+        if (!actor.getId().equals(candidate.getCandidateUserId())) {
+            throw new BusinessRuleException("ACCESS_DENIED", "Недостаточно прав для выполнения действия");
+        }
+    }
+
     private StageProgress requireCurrentStage(Candidate candidate) {
         return candidate.currentStage()
                 .orElseThrow(() -> new BusinessRuleException("CURRENT_STAGE_NOT_FOUND", "Текущий этап кандидата не найден"));
@@ -620,11 +640,8 @@ public class SelectionService {
     }
 
     private UserAccount requireUser(String userId) {
-        UserAccount user = users.get(userId);
-        if (user == null) {
-            throw new BusinessRuleException("USER_NOT_FOUND", "Пользователь не найден");
-        }
-        return user;
+        return userDirectory.findById(userId)
+                .orElseThrow(() -> new BusinessRuleException("USER_NOT_FOUND", "Пользователь не найден"));
     }
 
     private Invitation requireInvitation(String invitationId) {
@@ -646,6 +663,12 @@ public class SelectionService {
     private void event(EventType type, String actorUserId, String candidateId, String aggregateId, Map<String, Object> details) {
         eventSequence++;
         events.add(new EventRecord("event-" + eventSequence, type, actorUserId, candidateId, aggregateId, details, now()));
+    }
+
+    private String generatePassword() {
+        byte[] bytes = new byte[9];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     private Instant now() {
