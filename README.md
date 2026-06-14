@@ -47,6 +47,8 @@ PORT=8090 mvn spring-boot:run
 mvn test
 ```
 
+Тесты проверяют доменные правила UC и базовый HTTP-контур `/api`.
+
 ## Demo users
 
 - `member-1` - участник, создает приглашения;

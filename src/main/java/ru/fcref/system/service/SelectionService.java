@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import ru.fcref.system.config.AppProperties;
 import ru.fcref.system.domain.BlockRecord;
@@ -54,6 +55,7 @@ public class SelectionService {
     private int complaintSequence = 100;
     private int votingSessionSequence = 100;
 
+    @Autowired
     public SelectionService(AppProperties properties) {
         this(properties, Clock.systemUTC());
     }
