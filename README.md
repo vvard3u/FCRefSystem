@@ -25,7 +25,8 @@ MVP реализует сквозной каркас для ключевых UC 
 ## Run
 
 ```bash
-mvn spring-boot:run
+mvn package
+java -jar target/fc-ref-system-0.1.0-SNAPSHOT.jar
 ```
 
 После запуска:
@@ -35,10 +36,10 @@ mvn spring-boot:run
 - API snapshot: `http://localhost:8080/api/snapshot`
 - OpenAPI: `http://localhost:8080/openapi.yaml`
 
-Порт можно изменить переменной окружения:
+Порт можно изменить аргументом запуска:
 
 ```bash
-PORT=8090 mvn spring-boot:run
+java -jar target/fc-ref-system-0.1.0-SNAPSHOT.jar --server.port=8090
 ```
 
 ## Test

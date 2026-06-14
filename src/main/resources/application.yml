@@ -2,6 +2,8 @@ spring:
   application:
     name: fc-ref-system
 
+debug: false
+
 server:
   port: ${PORT:8080}
 

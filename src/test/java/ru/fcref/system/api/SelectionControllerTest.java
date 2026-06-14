@@ -13,7 +13,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "debug=false",
+        "logging.level.org.springframework=INFO"
+})
 @AutoConfigureMockMvc
 class SelectionControllerTest {
 
