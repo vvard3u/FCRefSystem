@@ -1,12 +1,13 @@
 # TASKS
 
-Документ фиксирует backlog работ, необходимых для доведения FCRefSystem от текущего MVP до финальной защиты и будущего релиза. Основания: SRS, SDP, Business Case, Risk List, Glossary, figma-прототип и текущее состояние репозитория.
+Документ фиксирует backlog работ, необходимых для доведения FCRefSystem от текущего MVP до финальной защиты и будущего релиза. Основания: локальные PDF SRS, SDP, Business Case, Risk List, Glossary, figma-прототип и текущее состояние репозитория.
 
 ## Current State
 
 - MVP уже содержит backend на Java/Spring Boot, frontend на HTML/CSS/JS, тесты, линтеры и GitHub Actions CI.
 - Реализована in-memory версия ключевых UC-01..UC-05: приглашения, регламент, голосование, блокировка, прохождение этапа.
 - Структура разделена на `backend/`, `frontend/`, `tests/backend/`, `figma/`, `config/`.
+- Исходные PDF-документы не версионируются: они должны оставаться локально в рабочем каталоге и игнорироваться Git.
 - Главные пробелы перед реальным релизом: нет PostgreSQL, миграций, настоящей аутентификации, сессий, серверного RBAC на уровне полноценной модели, production deployment, полноценной отчетности, E2E тестов, документации архитектуры и приемочного пакета.
 
 ## Definition of Done
@@ -24,7 +25,7 @@
 
 1.2. Build UC Traceability Matrix - связать UC-01..UC-05 из figma/SRS с API endpoints, service methods, UI forms and tests.
 
-1.3. Restore Missing Vision/Use Case Artifacts - добавить в репозиторий отдельные Vision и Use Case документы, если они существуют вне текущего каталога.
+1.3. Restore Missing Vision/Use Case Knowledge - найти локальные Vision и Use Case источники, извлечь из них требования в версионируемые markdown summaries, исходные PDF не добавлять в Git.
 
 1.4. Clarify MVP Acceptance Boundary - зафиксировать, какие части обязательны для защиты, а какие являются post-defense roadmap.
 
@@ -51,6 +52,8 @@
 1.15. Define Non-Functional Acceptance Criteria - перевести NFR в проверяемые acceptance checks.
 
 1.16. Add Requirements Change Log - вести изменения требований в одном месте, чтобы снизить риск scope creep.
+
+1.17. Maintain Local Source Document Policy - держать исходные PDF вне истории Git, обновлять только derived summaries, matrices and markdown docs.
 
 ## 2. Project Structure And Build System
 

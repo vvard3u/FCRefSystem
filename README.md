@@ -28,7 +28,17 @@ MVP реализует сквозной каркас для ключевых UC 
 - `frontend/` - static HTML/CSS/JS interface and UI assets.
 - `tests/backend/` - backend unit and API tests.
 - `figma/` - Figma prototype plugin sources.
-- project documents are stored in the repository root.
+- source PDF documents are local-only and ignored by Git.
+
+## Local Source Documents
+
+The original project PDFs are not stored in the repository. Keep them locally in the workspace root when analysis is needed:
+
+- `SRS_Boytsovskiy_Klub_corrected.pdf`
+- `SDP_filled_Boytsovskiy_Klub.pdf`
+- `BusinessCase_template.docx.pdf`
+- `RiskList_Boytsovskiy_Klub.pdf`
+- `Glossary_Boytsovskiy_Klub.pdf`
 
 ## Run
 

@@ -4,6 +4,7 @@ node_modules/
 .vscode/
 *.iml
 *.log
+*.pdf
 .env
 .DS_Store
 Thumbs.db
