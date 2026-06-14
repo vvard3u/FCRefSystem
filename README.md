@@ -22,11 +22,19 @@ MVP реализует сквозной каркас для ключевых UC 
 - REST API over JSON;
 - статический HTML/CSS/JS интерфейс, отдаваемый приложением.
 
+## Structure
+
+- `backend/` - Java/Spring Boot application and backend Maven module.
+- `frontend/` - static HTML/CSS/JS interface and UI assets.
+- `tests/backend/` - backend unit and API tests.
+- `figma/` - Figma prototype plugin sources.
+- project documents are stored in the repository root.
+
 ## Run
 
 ```bash
 mvn package
-java -jar target/fc-ref-system-0.1.0-SNAPSHOT.jar
+java -jar backend/target/fc-ref-system-0.1.0-SNAPSHOT.jar
 ```
 
 После запуска:
@@ -39,7 +47,7 @@ java -jar target/fc-ref-system-0.1.0-SNAPSHOT.jar
 Порт можно изменить аргументом запуска:
 
 ```bash
-java -jar target/fc-ref-system-0.1.0-SNAPSHOT.jar --server.port=8090
+java -jar backend/target/fc-ref-system-0.1.0-SNAPSHOT.jar --server.port=8090
 ```
 
 ## Test
