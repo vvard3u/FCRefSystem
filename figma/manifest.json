@@ -1,0 +1,9 @@
+{
+  "name": "BK Use Case Clickable Prototype",
+  "id": "bk-use-case-clickable-prototype",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": [
+    "figma"
+  ]
+}
