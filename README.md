@@ -6,7 +6,8 @@
 
 - Java 17;
 - Spring Boot, Spring Security, JDBC;
-- H2 in-memory database for MVP users and roles;
+- PostgreSQL 16 for demo data;
+- H2 in-memory database for automated tests;
 - Maven;
 - REST API over JSON;
 - static HTML/CSS/JS interface served by the backend.
@@ -20,6 +21,18 @@
 - source PDF documents are local-only and ignored by Git.
 
 ## Run
+
+Start PostgreSQL 16 first. The repository includes a local demo compose file:
+
+```bash
+docker compose up -d postgres
+```
+
+Default database settings:
+
+- URL: `jdbc:postgresql://localhost:5432/fcref`
+- user: `fcref`
+- password: `fcref`
 
 ```bash
 ./mvnw package
@@ -40,6 +53,35 @@ The port can be changed with a startup argument:
 
 ```bash
 java -jar backend/target/fc-ref-system-0.1.0-SNAPSHOT.jar --server.port=8090
+```
+
+Database settings can be changed with environment variables:
+
+- `DATABASE_URL`
+- `DATABASE_DRIVER`
+- `DATABASE_USERNAME`
+- `DATABASE_PASSWORD`
+
+## Database Inspection
+
+The application mirrors the demo selection state to PostgreSQL tables after every business event.
+
+Useful tables for defense/demo:
+
+- `app_users`, `app_user_roles` - accounts and roles.
+- `invitations` - referral invitations and activation status.
+- `candidates` - candidate status and current stage.
+- `candidate_stage_progress` - stage attempts, submitted results and interviewer decisions.
+- `voting_sessions`, `votes` - opened votes, thresholds, decisions and member votes.
+- `block_records`, `complaints` - blocking and complaint flow.
+- `selection_events` - chronological audit log.
+
+Example:
+
+```bash
+psql postgresql://fcref:fcref@localhost:5432/fcref
+select id, full_name, status, current_stage_id from candidates;
+select event_type, actor_user_id, candidate_id, occurred_at from selection_events order by occurred_at desc;
 ```
 
 ## Demo Users

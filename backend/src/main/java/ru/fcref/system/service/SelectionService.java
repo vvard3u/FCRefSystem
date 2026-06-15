@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import ru.fcref.system.config.AppProperties;
@@ -45,6 +46,7 @@ public class SelectionService {
     private final AppProperties properties;
     private final Clock clock;
     private final UserDirectory userDirectory;
+    private final SelectionStateRepository stateRepository;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Map<String, Invitation> invitations = new LinkedHashMap<>();
     private final Map<String, Candidate> candidates = new LinkedHashMap<>();
@@ -62,15 +64,30 @@ public class SelectionService {
     private int votingSessionSequence = 100;
 
     @Autowired
-    public SelectionService(AppProperties properties, UserDirectory userDirectory) {
-        this(properties, userDirectory, Clock.systemUTC());
+    public SelectionService(
+            AppProperties properties,
+            UserDirectory userDirectory,
+            SelectionStateRepository stateRepository
+    ) {
+        this(properties, userDirectory, Clock.systemUTC(), stateRepository);
     }
 
     public SelectionService(AppProperties properties, UserDirectory userDirectory, Clock clock) {
+        this(properties, userDirectory, clock, SelectionStateRepository.noop());
+    }
+
+    public SelectionService(
+            AppProperties properties,
+            UserDirectory userDirectory,
+            Clock clock,
+            SelectionStateRepository stateRepository
+    ) {
         this.properties = properties;
         this.userDirectory = userDirectory;
         this.clock = clock;
+        this.stateRepository = stateRepository;
         seed();
+        stateRepository.replaceSnapshot(snapshot());
     }
 
     public synchronized SelectionSnapshot snapshot() {
@@ -856,7 +873,18 @@ public class SelectionService {
 
     private void event(EventType type, String actorUserId, String candidateId, String aggregateId, Map<String, Object> details) {
         eventSequence++;
-        events.add(new EventRecord("event-" + eventSequence, type, actorUserId, candidateId, aggregateId, details, now()));
+        EventRecord event = new EventRecord(
+                "event-" + UUID.randomUUID(),
+                type,
+                actorUserId,
+                candidateId,
+                aggregateId,
+                details,
+                now()
+        );
+        events.add(event);
+        stateRepository.recordEvent(event);
+        stateRepository.replaceSnapshot(snapshot());
     }
 
     private String generatePassword() {

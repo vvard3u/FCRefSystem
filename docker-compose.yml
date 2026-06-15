@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: fcref-postgres
+    environment:
+      POSTGRES_DB: fcref
+      POSTGRES_USER: fcref
+      POSTGRES_PASSWORD: fcref
+    ports:
+      - "5432:5432"
+    volumes:
+      - fcref-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  fcref-postgres-data:
