@@ -130,6 +130,14 @@ class SelectionServiceTest {
         assertThat(duplicate.getState()).isEqualTo(StageState.SUBMITTED);
     }
 
+    @Test
+    void adminCannotSubmitStageResultForCandidate() {
+        assertThatThrownBy(() -> service.submitStageResult("admin-1", "candidate-stage", "result", "admin-stage-result"))
+                .isInstanceOf(BusinessRuleException.class)
+                .extracting("code")
+                .isEqualTo("ACCESS_DENIED");
+    }
+
     private static final class FakeUserDirectory implements UserDirectory {
 
         private final Map<String, UserAccount> users = new LinkedHashMap<>();

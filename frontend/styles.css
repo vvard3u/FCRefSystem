@@ -284,6 +284,25 @@ h3 {
   font-size: 30px;
 }
 
+.demo-users {
+  display: grid;
+  gap: 10px;
+}
+
+.demo-user {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px 14px;
+}
+
+.demo-user span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .field {
   display: grid;
   gap: 7px;
@@ -427,6 +446,17 @@ tr:last-child td {
   font-weight: 800;
 }
 
+.stage-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.stage-details__wide {
+  grid-column: 1 / -1;
+}
+
 .stage-list {
   display: grid;
   gap: 10px;
@@ -434,13 +464,40 @@ tr:last-child td {
 
 .stage-row {
   display: grid;
-  grid-template-columns: 1.2fr 110px 90px 90px 100px 1.2fr 118px;
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
 }
 
-.stage-row > input,
-.stage-row > select {
+.stage-row legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.stage-field,
+.stage-check {
+  display: grid;
+  gap: 7px;
+}
+
+.stage-field--wide {
+  grid-column: 1 / -1;
+}
+
+.stage-field span,
+.stage-check span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stage-field input,
+.stage-field select {
   min-width: 0;
   min-height: 38px;
   border: 1px solid var(--line-strong);
@@ -448,13 +505,10 @@ tr:last-child td {
   padding: 8px 9px;
 }
 
-.stage-row label {
+.stage-check {
   display: flex;
   gap: 8px;
   align-items: center;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .vote-options {
@@ -520,6 +574,21 @@ tr:last-child td {
   transform: translateY(0);
 }
 
+.activation-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.activation-panel {
+  width: min(560px, 100%);
+}
+
+.activation-brand {
+  margin-bottom: 24px;
+}
+
 @media (width <= 980px) {
   .shell {
     grid-template-columns: 1fr;
@@ -565,12 +634,16 @@ tr:last-child td {
 
   .grid--two,
   .grid--three,
+  .stage-details,
   .status-strip {
     grid-template-columns: 1fr;
   }
 
-  .stage-row,
   .event {
+    grid-template-columns: 1fr;
+  }
+
+  .stage-row {
     grid-template-columns: 1fr;
   }
 }

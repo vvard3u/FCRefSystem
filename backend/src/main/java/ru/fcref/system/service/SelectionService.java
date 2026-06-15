@@ -227,7 +227,7 @@ public class SelectionService {
     }
 
     public synchronized StageProgress submitStageResult(String actorUserId, String candidateId, String result, String requestId) {
-        UserAccount actor = requireAnyRole(actorUserId, Role.CANDIDATE, Role.ADMIN);
+        UserAccount actor = requireRole(actorUserId, Role.CANDIDATE);
         requireText(result, "result", "Результат этапа обязателен");
         Candidate candidate = requireCandidate(candidateId);
         ensureCandidateOwnsRecord(actor, candidate);
@@ -729,9 +729,6 @@ public class SelectionService {
     }
 
     private void ensureCandidateOwnsRecord(UserAccount actor, Candidate candidate) {
-        if (actor.hasRole(Role.ADMIN)) {
-            return;
-        }
         if (!actor.getId().equals(candidate.getCandidateUserId())) {
             throw new BusinessRuleException("ACCESS_DENIED", "Недостаточно прав для выполнения действия");
         }

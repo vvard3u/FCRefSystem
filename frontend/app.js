@@ -1,10 +1,49 @@
-const titles = {
-  invitations: ['UC-01', 'Создание реферального приглашения'],
-  regulation: ['UC-02', 'Создание регламента отбора'],
-  voting: ['UC-03', 'Голосование по кандидату'],
-  blocking: ['UC-04', 'Блокировка кандидата'],
-  stage: ['UC-05', 'Прохождение этапа отбора'],
-  journal: ['FR-018', 'Журнал событий']
+const viewDefinitions = [
+  {
+    id: 'invitations',
+    label: 'Приглашения',
+    title: 'Создание реферального приглашения',
+    roles: ['MEMBER', 'PRIVILEGED_MEMBER']
+  },
+  {
+    id: 'regulation',
+    label: 'Регламент',
+    title: 'Регламент отбора',
+    roles: ['ADMIN']
+  },
+  {
+    id: 'voting',
+    label: 'Голосование',
+    title: 'Голосование по кандидату',
+    roles: ['PRIVILEGED_MEMBER', 'ADMIN']
+  },
+  {
+    id: 'blocking',
+    label: 'Блокировка',
+    title: 'Блокировка кандидата',
+    roles: ['INTERVIEWER', 'ADMIN']
+  },
+  {
+    id: 'stage',
+    label: 'Этап отбора',
+    title: 'Прохождение этапа отбора',
+    roles: ['CANDIDATE', 'INTERVIEWER', 'ADMIN']
+  },
+  {
+    id: 'journal',
+    label: 'Журнал',
+    title: 'Журнал событий',
+    roles: ['ADMIN']
+  }
+];
+
+const viewRenderers = {
+  invitations: renderInvitations,
+  regulation: renderRegulation,
+  voting: renderVoting,
+  blocking: renderBlocking,
+  stage: renderStage,
+  journal: renderJournal
 };
 
 const roleLabels = {
@@ -35,6 +74,19 @@ const statusLabels = {
   CLOSED: 'Закрыто'
 };
 
+const stageTypeLabels = {
+  FORM: 'Анкета',
+  TASK: 'Задание',
+  INTERVIEW: 'Интервью',
+  VOTE: 'Голосование'
+};
+
+const verdictLabels = {
+  PASSED: 'Пройден',
+  FAILED: 'Не пройден',
+  RETRY: 'Повтор'
+};
+
 const eventLabels = {
   INVITATION_CREATED: 'Создание приглашения',
   INVITATION_ACTIVATED: 'Активация приглашения',
@@ -59,7 +111,7 @@ const state = {
   auth: localStorage.getItem('fcRefBasicAuth') || '',
   view: 'invitations',
   voteChoice: 'SUPPORT',
-  issuedCredentials: null,
+  lastInvitation: null,
   selectedCandidates: {
     voting: 'candidate-vote',
     blocking: 'candidate-block',
@@ -69,17 +121,9 @@ const state = {
 
 const app = document.querySelector('#app');
 const authPanel = document.querySelector('#auth-panel');
+const nav = document.querySelector('#nav');
 const viewTitle = document.querySelector('#view-title');
-const viewKicker = document.querySelector('#view-kicker');
 const toast = document.querySelector('#toast');
-
-document.querySelectorAll('[data-view]').forEach((button) => {
-  button.addEventListener('click', () => {
-    state.view = button.dataset.view;
-    document.querySelectorAll('[data-view]').forEach((item) => item.classList.toggle('is-active', item === button));
-    render();
-  });
-});
 
 load();
 
@@ -105,9 +149,9 @@ async function loadAuthenticatedState() {
 }
 
 async function request(path, options = {}) {
-  const { publicRequest = false, headers = {}, ...fetchOptions } = options;
+  const { headers = {}, ...fetchOptions } = options;
   const requestHeaders = { 'Content-Type': 'application/json', ...headers };
-  if (state.auth && !publicRequest) {
+  if (state.auth) {
     requestHeaders.Authorization = state.auth;
   }
   const response = await fetch(path, {
@@ -115,7 +159,7 @@ async function request(path, options = {}) {
     ...fetchOptions
   });
   if (!response.ok) {
-    if (response.status === 401 && !publicRequest) {
+    if (response.status === 401) {
       clearAuth();
       render();
     }
@@ -132,38 +176,32 @@ async function request(path, options = {}) {
 
 async function mutate(path, body, label) {
   try {
-    await request(path, {
+    const result = await request(path, {
       method: 'POST',
       body: JSON.stringify(body)
     });
     await loadAuthenticatedState();
     showToast(label);
+    return result;
   } catch (error) {
     showToast(error.message || 'Операция не выполнена');
+    return null;
   }
 }
 
 function render() {
   renderAuthPanel();
+  renderNav();
   if (!state.session || !state.snapshot) {
-    viewKicker.textContent = 'UC-01';
-    viewTitle.textContent = 'Активация приглашения';
-    app.innerHTML = renderPublicActivation();
-    wireView();
+    viewTitle.textContent = 'Вход в систему';
+    app.innerHTML = renderLoginContent();
     return;
   }
 
-  const [kicker, title] = titles[state.view];
-  viewKicker.textContent = kicker;
-  viewTitle.textContent = title;
-  app.innerHTML = {
-    invitations: renderInvitations,
-    regulation: renderRegulation,
-    voting: renderVoting,
-    blocking: renderBlocking,
-    stage: renderStage,
-    journal: renderJournal
-  }[state.view]();
+  ensureViewAccess();
+  const definition = viewDefinitions.find((item) => item.id === state.view);
+  viewTitle.textContent = definition?.title || 'FCRefSystem';
+  app.innerHTML = viewRenderers[state.view]?.() || renderNoAvailableViews();
   wireView();
 }
 
@@ -190,6 +228,25 @@ function renderAuthPanel() {
   wireAuthPanel();
 }
 
+function renderNav() {
+  if (!state.session) {
+    nav.innerHTML = '';
+    return;
+  }
+  ensureViewAccess();
+  nav.innerHTML = allowedViews().map((definition) => `
+    <button class="nav__item ${state.view === definition.id ? 'is-active' : ''}" type="button" data-view="${definition.id}">
+      ${escapeHtml(definition.label)}
+    </button>
+  `).join('');
+  nav.querySelectorAll('[data-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.view = button.dataset.view;
+      render();
+    });
+  });
+}
+
 function wireAuthPanel() {
   const loginForm = document.querySelector('#login-form');
   if (loginForm) {
@@ -214,151 +271,168 @@ function wireAuthPanel() {
       clearAuth();
       state.snapshot = null;
       state.session = null;
+      state.lastInvitation = null;
       render();
     });
   }
 }
 
-function renderPublicActivation() {
+function renderLoginContent() {
   return `
     <section class="grid grid--two">
-      ${renderActivationPanel()}
       <div class="panel">
-        <h2>Доступ к рабочим сценариям</h2>
-        <div class="placeholder">
-          <strong>Требуется вход</strong>
-          <p class="muted">После входа система откроет действия, доступные роли текущего пользователя.</p>
+        <h2>Демо-доступ</h2>
+        <div class="demo-users">
+          ${demoUser('member', 'member', 'Создает приглашения')}
+          ${demoUser('privileged', 'privileged', 'Создает приглашения и голосует')}
+          ${demoUser('interviewer', 'interviewer', 'Проверяет этапы и блокирует кандидатов')}
+          ${demoUser('admin', 'admin', 'Управляет регламентом и голосованием')}
+          ${demoUser('candidate', 'candidate', 'Проходит назначенный этап')}
         </div>
       </div>
+      <div class="panel">
+        <h2>Активация приглашения</h2>
+        <div class="placeholder">
+          <strong>Отдельная страница кандидата</strong>
+          <p class="muted">Кандидат активирует приглашение до входа в систему. После активации система создает профиль и выдает логин с паролем.</p>
+        </div>
+        <div class="actions toolbar">
+          <a class="btn btn--good" href="/activate.html">Перейти к активации</a>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function demoUser(username, password, description) {
+  return `
+    <article class="demo-user">
+      <strong>${escapeHtml(username)} / ${escapeHtml(password)}</strong>
+      <span>${escapeHtml(description)}</span>
+    </article>
+  `;
+}
+
+function renderNoAvailableViews() {
+  return `
+    <section class="panel">
+      ${placeholder('Нет доступных разделов', 'Для текущей учетной записи не настроены рабочие разделы демо-версии.')}
     </section>
   `;
 }
 
 function renderInvitations() {
-  const actorInvitations = state.snapshot.invitations.filter((invitation) => invitation.authorUserId === state.session.id);
-  const activeCount = actorInvitations.filter((invitation) => invitation.status === 'ACTIVE').length;
+  const ownInvitations = state.snapshot.invitations;
+  const activeCount = ownInvitations.filter((invitation) => invitation.status === 'ACTIVE').length;
   const quota = Math.max(0, 3 - activeCount);
-  const createPanel = hasRole('MEMBER') ? `
-    <div class="panel">
-      <div class="status-strip">
-        <div class="status-item"><span>Доступная квота</span><strong>${quota}</strong></div>
-        <div class="status-item"><span>Активные</span><strong>${activeCount}</strong></div>
-        <div class="status-item"><span>Всего</span><strong>${actorInvitations.length}</strong></div>
-      </div>
-      <form id="create-invitation-form">
-        <label class="field">
-          <span>Комментарий</span>
-          <textarea name="comment">Кандидат рекомендован действующим участником клуба</textarea>
-        </label>
-        <div class="actions">
-          <button class="btn btn--primary" type="submit">Создать приглашение</button>
-          <a class="btn" href="/openapi.yaml" target="_blank" rel="noreferrer">OpenAPI</a>
-        </div>
-      </form>
-    </div>
-  ` : `
-    <div class="panel">
-      <h2>Создание приглашения</h2>
-      ${placeholder('Недоступно для текущей роли', 'Приглашение может создать только действующий участник клуба.')}
-    </div>
-  `;
+  const lastInvitation = state.lastInvitation;
 
   return `
     <section class="grid grid--two">
-      ${createPanel}
-      ${renderActivationPanel()}
+      <div class="panel">
+        <div class="status-strip">
+          <div class="status-item"><span>Доступная квота</span><strong>${quota}</strong></div>
+          <div class="status-item"><span>Активные</span><strong>${activeCount}</strong></div>
+          <div class="status-item"><span>Всего</span><strong>${ownInvitations.length}</strong></div>
+        </div>
+        <form id="create-invitation-form">
+          <label class="field">
+            <span>Комментарий к рекомендации</span>
+            <textarea name="comment">Кандидат рекомендован действующим участником клуба</textarea>
+          </label>
+          <div class="actions">
+            <button class="btn btn--primary" type="submit">Создать приглашение</button>
+          </div>
+        </form>
+      </div>
+      <div class="panel">
+        <h2>Ссылка для кандидата</h2>
+        ${lastInvitation ? invitationLinkCard(lastInvitation) : placeholder(
+    'Создайте приглашение',
+    'После создания здесь появится ссылка, которую можно передать кандидату.'
+  )}
+      </div>
     </section>
     <section class="panel">
-      <h2>Приглашения</h2>
-      ${table(['Токен', 'Статус', 'Автор', 'Создано', 'Срок'], state.snapshot.invitations.map((invitation) => [
-        escapeHtml(invitation.token),
-        badge(invitation.status),
-        escapeHtml(userName(invitation.authorUserId)),
-        escapeHtml(formatDate(invitation.createdAt)),
-        escapeHtml(formatDate(invitation.expiresAt))
-      ]))}
+      <h2>Мои приглашения</h2>
+      ${ownInvitations.length > 0 ? table(
+    ['Токен', 'Ссылка активации', 'Статус', 'Создано', 'Срок действия'],
+    ownInvitations.map((invitation) => [
+      escapeHtml(invitation.token),
+      `<a href="${escapeHtml(invitationLink(invitation.token))}" target="_blank" rel="noreferrer">Открыть</a>`,
+      badge(invitation.status),
+      escapeHtml(formatDate(invitation.createdAt)),
+      escapeHtml(formatDate(invitation.expiresAt))
+    ])
+  ) : placeholder('Приглашений нет', 'Созданные приглашения появятся в этом списке.')}
     </section>
   `;
 }
 
-function renderActivationPanel() {
+function invitationLinkCard(invitation) {
+  const link = invitationLink(invitation.token);
   return `
-    <div class="panel">
-      <h2>Активация приглашения</h2>
-      <form id="activate-invitation-form">
-        <label class="field">
-          <span>Токен</span>
-          <input name="token" value="${escapeHtml(nextActiveToken())}">
-        </label>
-        <label class="field">
-          <span>ФИО кандидата</span>
-          <input name="fullName" value="Новый Кандидат">
-        </label>
-        <button class="btn btn--good" type="submit">Активировать</button>
-      </form>
-      ${state.issuedCredentials ? `
-        <div class="credential-card">
-          <span>Учетная запись кандидата</span>
-          <strong>${escapeHtml(state.issuedCredentials.username)}</strong>
-          <code>${escapeHtml(state.issuedCredentials.password)}</code>
-        </div>
-      ` : ''}
+    <div class="credential-card">
+      <span>Приглашение создано</span>
+      <strong>${escapeHtml(invitation.token)}</strong>
+      <a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>
     </div>
   `;
 }
 
 function renderRegulation() {
   const regulation = activeRegulation();
-  if (!hasRole('ADMIN')) {
-    return `
-      <section class="grid">
-        <div class="panel">
-          <div class="status-strip">
-            <div class="status-item"><span>Активный регламент</span><strong>${escapeHtml(regulation.name)}</strong></div>
-            <div class="status-item"><span>Этапов</span><strong>${regulation.stages.length}</strong></div>
-            <div class="status-item"><span>Изменил</span><strong>${escapeHtml(userName(regulation.createdByUserId))}</strong></div>
-          </div>
-          ${placeholder('Редактирование недоступно', 'Регламент отбора изменяет администратор.')}
-          ${renderStageList(regulation.stages)}
-        </div>
-      </section>
-    `;
-  }
-
   return `
-    <section class="grid">
+    <section class="grid grid--two">
       <div class="panel">
-        <div class="status-strip">
-          <div class="status-item"><span>Активный регламент</span><strong>${escapeHtml(regulation.name)}</strong></div>
-          <div class="status-item"><span>Этапов</span><strong>${regulation.stages.length}</strong></div>
-          <div class="status-item"><span>Изменил</span><strong>${escapeHtml(userName(regulation.createdByUserId))}</strong></div>
-        </div>
+        <h2>Создание регламента</h2>
         <form id="regulation-form">
           <label class="field">
-            <span>Название</span>
+            <span>Название регламента</span>
             <input name="name" value="${escapeHtml(regulation.name)}">
           </label>
           <label class="field">
-            <span>Описание</span>
+            <span>Описание правил отбора</span>
             <textarea name="description">${escapeHtml(regulation.description)}</textarea>
           </label>
           <div class="stage-list">
-            ${regulation.stages.map((stage) => stageEditor(stage)).join('')}
+            ${regulation.stages.map((stage, index) => stageEditor(stage, index)).join('')}
           </div>
-          <div class="actions">
-            <button class="btn btn--primary" type="submit">Сохранить регламент</button>
+          <div class="actions toolbar">
+            <button class="btn btn--primary" type="submit">Сохранить и активировать</button>
           </div>
         </form>
+      </div>
+      <div class="panel">
+        ${renderRegulationSummary(regulation)}
       </div>
     </section>
   `;
 }
 
+function renderRegulationSummary(regulation) {
+  return `
+    <h2>Сохраненный регламент</h2>
+    <div class="status-strip">
+      <div class="status-item"><span>Название</span><strong>${escapeHtml(regulation.name)}</strong></div>
+      <div class="status-item"><span>Этапов</span><strong>${regulation.stages.length}</strong></div>
+      <div class="status-item"><span>Создал</span><strong>${escapeHtml(userName(regulation.createdByUserId))}</strong></div>
+    </div>
+    <p class="muted">${escapeHtml(regulation.description || 'Описание не указано')}</p>
+    ${renderStageList(regulation.stages)}
+  `;
+}
+
 function renderVoting() {
   const candidate = selectedCandidate('voting');
+  if (!candidate) {
+    return emptyCandidatePanel();
+  }
   const current = currentStage(candidate);
   const session = candidate.votingSessions.find((item) => item.status === 'OPEN') || candidate.votingSessions.at(-1);
-  const votePanel = hasRole('PRIVILEGED_MEMBER') ? `
+  const canManageVoting = hasRole('ADMIN');
+  const canVote = hasRole('PRIVILEGED_MEMBER');
+  const votePanel = canVote ? `
     <div class="panel">
       <h2>Голос</h2>
       <form id="vote-form">
@@ -371,7 +445,7 @@ function renderVoting() {
           </button>
         </div>
         <label class="field">
-          <span>Пояснение</span>
+          <span>Обязательное пояснение</span>
           <textarea name="reason">Решение принято по материалам кандидата</textarea>
         </label>
         <button class="btn btn--primary" type="submit">Отправить голос</button>
@@ -379,8 +453,8 @@ function renderVoting() {
     </div>
   ` : `
     <div class="panel">
-      <h2>Голос</h2>
-      ${placeholder('Голосование недоступно', 'Голос может подать только привилегированный участник.')}
+      <h2>Управление голосованием</h2>
+      ${placeholder('Голосуют участники', 'Администратор открывает и закрывает голосование, но не подает голос за участника клуба.')}
     </div>
   `;
 
@@ -392,106 +466,161 @@ function renderVoting() {
         <div class="band">
           <h3>${escapeHtml(candidate.fullName)}</h3>
           <p class="muted">Текущий этап: ${escapeHtml(current?.stageName || 'не назначен')}</p>
+          <p class="muted">Статус голосования: ${session ? badge(session.status) : 'не открыто'}</p>
           <p class="muted">Голосов: ${session ? session.votes.length : 0}</p>
         </div>
-        ${hasRole('ADMIN') ? `
+        ${canManageVoting ? `
           <div class="actions toolbar">
             <button class="btn" type="button" id="open-vote">Открыть голосование</button>
-            <button class="btn" type="button" id="close-vote">Закрыть голосование</button>
+            <button class="btn" type="button" id="close-vote" ${session?.status === 'OPEN' ? '' : 'disabled'}>Закрыть голосование</button>
           </div>
         ` : ''}
       </div>
       ${votePanel}
     </section>
-    <section class="panel">
-      <h2>Жалоба</h2>
-      ${hasRole('PRIVILEGED_MEMBER') ? `
+    ${canVote ? `
+      <section class="panel">
+        <h2>Жалоба</h2>
         <form id="complaint-form" class="actions">
           <input name="reason" value="Требуется дополнительная проверка" aria-label="Причина жалобы">
           <button class="btn" type="submit">Подать жалобу</button>
         </form>
-      ` : placeholder('Недоступно для текущей роли', 'Жалобу может подать привилегированный участник.')}
-    </section>
+      </section>
+    ` : ''}
   `;
 }
 
 function renderBlocking() {
   const candidate = selectedCandidate('blocking');
-  const canBlock = hasRole('INTERVIEWER') || hasRole('ADMIN');
+  if (!candidate) {
+    return emptyCandidatePanel();
+  }
   return `
     <section class="grid grid--two">
       <div class="panel">
         ${candidatePicker('blocking')}
         ${candidateStatus(candidate)}
+        ${renderBlocks(candidate)}
       </div>
       <div class="panel">
         <h2>Блокировка</h2>
-        ${canBlock ? `
-          <form id="block-form">
-            <label class="field">
-              <span>Категория</span>
-              <input name="category" value="Нарушение правил сообщества">
-            </label>
-            <label class="field">
-              <span>Причина</span>
-              <textarea name="reason">Основание зафиксировано интервьюером</textarea>
-            </label>
-            <div class="actions">
-              <button class="btn btn--danger" type="submit">Заблокировать</button>
-              ${hasRole('ADMIN') ? '<button class="btn" id="unblock-candidate" type="button">Снять блокировку</button>' : ''}
-            </div>
-          </form>
-        ` : placeholder('Блокировка недоступна', 'Кандидата блокирует интервьюер или администратор.')}
+        <form id="block-form">
+          <label class="field">
+            <span>Категория нарушения</span>
+            <input name="category" value="Нарушение правил сообщества">
+          </label>
+          <label class="field">
+            <span>Обязательная причина</span>
+            <textarea name="reason">Основание зафиксировано интервьюером</textarea>
+          </label>
+          <div class="actions">
+            <button class="btn btn--danger" type="submit">Заблокировать</button>
+            ${hasRole('ADMIN') ? '<button class="btn" id="unblock-candidate" type="button">Снять блокировку</button>' : ''}
+          </div>
+        </form>
       </div>
     </section>
   `;
 }
 
+function renderBlocks(candidate) {
+  const activeBlock = candidate.blocks.find((block) => block.active);
+  if (!activeBlock) {
+    return placeholder('Активной блокировки нет', 'Если интервьюер или администратор зафиксирует нарушение, оно появится здесь.');
+  }
+  return `
+    <div class="band">
+      <h3>${escapeHtml(activeBlock.category)}</h3>
+      <p class="muted">${escapeHtml(activeBlock.reason)}</p>
+    </div>
+  `;
+}
+
 function renderStage() {
   const candidate = selectedCandidate('stage');
+  if (!candidate) {
+    return emptyCandidatePanel();
+  }
   const current = currentStage(candidate);
-  const canSubmit = hasRole('ADMIN') || (hasRole('CANDIDATE') && candidate.candidateUserId === state.session.id);
+  const rule = current ? stageRule(current.stageId) : null;
+  const canSubmit = hasRole('CANDIDATE') && candidate.candidateUserId === state.session.id;
   const canVerdict = hasRole('INTERVIEWER') || hasRole('ADMIN');
+  const canPickCandidate = !hasRole('CANDIDATE') || hasRole('ADMIN') || hasRole('INTERVIEWER');
+  const submitDisabled = !current || ['SUBMITTED', 'PASSED', 'FAILED'].includes(current.state) || candidate.status === 'BLOCKED';
+
   return `
     <section class="grid grid--two">
       <div class="panel">
-        ${candidatePicker('stage')}
+        ${canPickCandidate ? candidatePicker('stage') : `<div class="band"><h3>${escapeHtml(candidate.fullName)}</h3></div>`}
         ${candidateStatus(candidate)}
+        ${renderStageDetails(current, rule)}
         ${canSubmit ? `
           <form id="stage-result-form">
             <label class="field">
-              <span>Результат</span>
+              <span>Результат выполнения этапа</span>
               <textarea name="result">Результат этапа подготовлен и отправлен через систему</textarea>
             </label>
-            <button class="btn btn--primary" type="submit">Отправить результат</button>
+            <button class="btn btn--primary" type="submit" ${submitDisabled ? 'disabled' : ''}>Отправить результат</button>
           </form>
-        ` : placeholder('Отправка результата недоступна', 'Результат этапа отправляет кандидат или администратор.')}
+        ` : ''}
       </div>
       <div class="panel">
         <h2>Вердикт</h2>
         ${canVerdict ? `
           <form id="verdict-form">
             <label class="field">
-              <span>Решение</span>
+              <span>Решение по этапу</span>
               <select name="verdict">
-                <option value="PASSED">Passed</option>
-                <option value="FAILED">Failed</option>
-                <option value="RETRY">Retry</option>
+                <option value="PASSED">Пройден</option>
+                <option value="FAILED">Не пройден</option>
+                <option value="RETRY">Повтор</option>
               </select>
             </label>
             <label class="field">
-              <span>Отчет</span>
+              <span>Отчет интервьюера</span>
               <textarea name="report">Результат проверен, решение зафиксировано</textarea>
             </label>
             <button class="btn" type="submit">Зафиксировать вердикт</button>
           </form>
-        ` : placeholder('Вердикт недоступен', 'Вердикт фиксирует интервьюер или администратор.')}
-        <div class="band">
-          <strong>${escapeHtml(current?.stageName || 'Этап не назначен')}</strong>
-          <p class="muted">Попытка: ${current?.attemptNumber || 0} из ${current?.attemptLimit || 0}</p>
-        </div>
+        ` : renderCandidateResult(current)}
       </div>
     </section>
+  `;
+}
+
+function renderStageDetails(current, rule) {
+  if (!current) {
+    return placeholder('Этап не назначен', 'Текущий этап появится после назначения.');
+  }
+  return `
+    <div class="stage-details">
+      <div class="status-item"><span>Этап</span><strong>${escapeHtml(current.stageName)}</strong></div>
+      <div class="status-item"><span>Тип</span><strong>${escapeHtml(stageTypeLabels[current.stageType] || current.stageType)}</strong></div>
+      <div class="status-item"><span>Попытка</span><strong>${current.attemptNumber} из ${current.attemptLimit}</strong></div>
+      <div class="status-item"><span>Срок</span><strong>${rule ? `${rule.dueDays} дн.` : 'не указан'}</strong></div>
+      <div class="status-item stage-details__wide">
+        <span>Критерии прохождения</span>
+        <strong>${escapeHtml(rule?.criteria || 'Критерии не указаны')}</strong>
+      </div>
+      ${current.submittedResult ? `
+        <div class="status-item stage-details__wide">
+          <span>Отправленный результат</span>
+          <strong>${escapeHtml(current.submittedResult)}</strong>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderCandidateResult(current) {
+  if (!current?.verdict) {
+    return placeholder('Решение еще не принято', 'После проверки здесь появится доступный кандидату результат.');
+  }
+  return `
+    <div class="band">
+      <h3>${escapeHtml(verdictLabels[current.verdict] || current.verdict)}</h3>
+      <p class="muted">${escapeHtml(current.report || '')}</p>
+    </div>
   `;
 }
 
@@ -515,39 +644,14 @@ function renderJournal() {
 function wireView() {
   const createInvitationForm = document.querySelector('#create-invitation-form');
   if (createInvitationForm) {
-    createInvitationForm.addEventListener('submit', (event) => {
+    createInvitationForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = new FormData(createInvitationForm);
-      mutate('/api/invitations', {
+      state.lastInvitation = await mutate('/api/invitations', {
         comment: form.get('comment'),
         requestId: crypto.randomUUID()
       }, 'Приглашение создано');
-    });
-  }
-
-  const activateForm = document.querySelector('#activate-invitation-form');
-  if (activateForm) {
-    activateForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const form = new FormData(activateForm);
-      try {
-        state.issuedCredentials = await request('/api/invitations/activate', {
-          method: 'POST',
-          body: JSON.stringify({
-            token: form.get('token'),
-            fullName: form.get('fullName')
-          }),
-          publicRequest: true
-        });
-        if (state.session) {
-          state.snapshot = await request('/api/snapshot');
-          normalizeCandidateSelection();
-        }
-        render();
-        showToast('Кандидат зарегистрирован');
-      } catch (error) {
-        showToast(error.message || 'Активация не выполнена');
-      }
+      render();
     });
   }
 
@@ -679,6 +783,20 @@ function roleList(roles) {
   return roles.map((role) => roleLabels[role] || role).join(', ');
 }
 
+function allowedViews() {
+  if (!state.session) {
+    return [];
+  }
+  return viewDefinitions.filter((definition) => definition.roles.some((role) => hasRole(role)));
+}
+
+function ensureViewAccess() {
+  const allowed = allowedViews();
+  if (!allowed.some((definition) => definition.id === state.view)) {
+    state.view = allowed[0]?.id || '';
+  }
+}
+
 function normalizeCandidateSelection() {
   Object.keys(state.selectedCandidates).forEach((view) => {
     const options = candidatesForView(view);
@@ -689,9 +807,11 @@ function normalizeCandidateSelection() {
 }
 
 function candidatesForView(view) {
-  if (view === 'stage' && hasRole('CANDIDATE') && !hasRole('ADMIN')) {
-    const ownedCandidates = state.snapshot.candidates.filter((candidate) => candidate.candidateUserId === state.session.id);
-    return ownedCandidates.length > 0 ? ownedCandidates : [];
+  if (!state.snapshot) {
+    return [];
+  }
+  if (view === 'stage' && hasRole('CANDIDATE') && !hasRole('ADMIN') && !hasRole('INTERVIEWER')) {
+    return state.snapshot.candidates.filter((candidate) => candidate.candidateUserId === state.session.id);
   }
   return state.snapshot.candidates;
 }
@@ -699,11 +819,14 @@ function candidatesForView(view) {
 function selectedCandidate(view) {
   const options = candidatesForView(view);
   const id = state.selectedCandidates[view];
-  return options.find((candidate) => candidate.id === id) || options[0] || state.snapshot.candidates[0];
+  return options.find((candidate) => candidate.id === id) || options[0] || null;
 }
 
 function candidatePicker(view) {
   const options = candidatesForView(view);
+  if (options.length === 0) {
+    return placeholder('Кандидатов нет', 'В текущей роли нет доступных карточек кандидатов.');
+  }
   return `
     <label class="field">
       <span>Кандидат</span>
@@ -725,7 +848,7 @@ function candidateStatus(candidate) {
     <div class="status-strip">
       <div class="status-item"><span>Статус</span><strong>${badge(candidate.status)}</strong></div>
       <div class="status-item"><span>Этап</span><strong>${escapeHtml(current?.stageName || 'нет')}</strong></div>
-      <div class="status-item"><span>Действие</span><strong>${escapeHtml(nextAction)}</strong></div>
+      <div class="status-item"><span>Следующее действие</span><strong>${escapeHtml(nextAction)}</strong></div>
     </div>
   `;
 }
@@ -741,11 +864,15 @@ function nextActionFor(candidate, current) {
 }
 
 function currentStage(candidate) {
-  return candidate.stages.find((stage) => stage.stageId === candidate.currentStageId);
+  return candidate?.stages?.find((stage) => stage.stageId === candidate.currentStageId);
 }
 
 function activeRegulation() {
   return state.snapshot.regulations.find((regulation) => regulation.active) || state.snapshot.regulations[0];
+}
+
+function stageRule(stageId) {
+  return activeRegulation()?.stages?.find((stage) => stage.id === stageId);
 }
 
 function readStages() {
@@ -763,20 +890,44 @@ function readStages() {
   }));
 }
 
-function stageEditor(stage) {
+function stageEditor(stage, index) {
   return `
-    <div class="stage-row" data-stage-row>
-      <input name="stageName" value="${escapeHtml(stage.name)}" aria-label="Название этапа">
-      <select name="stageType" aria-label="Тип этапа">
-        ${['FORM', 'TASK', 'INTERVIEW', 'VOTE'].map((type) => `<option value="${type}" ${stage.type === type ? 'selected' : ''}>${type}</option>`).join('')}
-      </select>
-      <input name="attemptLimit" type="number" min="1" value="${stage.attemptLimit}" aria-label="Лимит попыток">
-      <input name="dueDays" type="number" min="1" value="${stage.dueDays}" aria-label="Срок">
-      <input name="thresholdPercent" type="number" min="1" max="100" value="${stage.thresholdPercent ?? ''}" aria-label="Порог">
-      <input name="criteria" value="${escapeHtml(stage.criteria || '')}" aria-label="Критерии">
-      <label><input name="requiresSubmission" type="checkbox" ${stage.requiresSubmission ? 'checked' : ''}> Результат</label>
+    <fieldset class="stage-row" data-stage-row>
+      <legend>Этап ${index + 1}</legend>
+      <label class="stage-field">
+        <span>Название этапа</span>
+        <input name="stageName" value="${escapeHtml(stage.name)}">
+      </label>
+      <label class="stage-field">
+        <span>Тип этапа</span>
+        <select name="stageType">
+          ${Object.entries(stageTypeLabels).map(([type, label]) => `
+            <option value="${type}" ${stage.type === type ? 'selected' : ''}>${escapeHtml(label)}</option>
+          `).join('')}
+        </select>
+      </label>
+      <label class="stage-field">
+        <span>Лимит попыток</span>
+        <input name="attemptLimit" type="number" min="1" value="${stage.attemptLimit}">
+      </label>
+      <label class="stage-field">
+        <span>Срок, дней</span>
+        <input name="dueDays" type="number" min="1" value="${stage.dueDays}">
+      </label>
+      <label class="stage-field">
+        <span>Порог, %</span>
+        <input name="thresholdPercent" type="number" min="1" max="100" value="${stage.thresholdPercent ?? ''}">
+      </label>
+      <label class="stage-field stage-field--wide">
+        <span>Критерии прохождения</span>
+        <input name="criteria" value="${escapeHtml(stage.criteria || '')}">
+      </label>
+      <label class="stage-check">
+        <input name="requiresSubmission" type="checkbox" ${stage.requiresSubmission ? 'checked' : ''}>
+        <span>Кандидат отправляет результат</span>
+      </label>
       <input name="stageId" type="hidden" value="${escapeHtml(stage.id)}">
-    </div>
+    </fieldset>
   `;
 }
 
@@ -784,15 +935,25 @@ function renderStageList(stages) {
   return `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Этап</th><th>Тип</th><th>Попытки</th><th>Срок</th><th>Порог</th></tr></thead>
+        <thead>
+          <tr>
+            <th>Этап</th>
+            <th>Тип</th>
+            <th>Попытки</th>
+            <th>Срок</th>
+            <th>Порог</th>
+            <th>Критерии</th>
+          </tr>
+        </thead>
         <tbody>
           ${stages.map((stage) => `
             <tr>
               <td>${escapeHtml(stage.name)}</td>
-              <td>${escapeHtml(stage.type)}</td>
+              <td>${escapeHtml(stageTypeLabels[stage.type] || stage.type)}</td>
               <td>${stage.attemptLimit}</td>
-              <td>${stage.dueDays}</td>
-              <td>${stage.thresholdPercent ?? ''}</td>
+              <td>${stage.dueDays} дн.</td>
+              <td>${stage.thresholdPercent ? `${stage.thresholdPercent}%` : ''}</td>
+              <td>${escapeHtml(stage.criteria || '')}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -801,11 +962,16 @@ function renderStageList(stages) {
   `;
 }
 
-function nextActiveToken() {
-  if (!state.snapshot) {
-    return 'bk-seed-active';
-  }
-  return state.snapshot.invitations.find((invitation) => invitation.status === 'ACTIVE')?.token || '';
+function emptyCandidatePanel() {
+  return `
+    <section class="panel">
+      ${placeholder('Нет доступных кандидатов', 'Для текущей роли пока нет кандидатов в этом сценарии.')}
+    </section>
+  `;
+}
+
+function invitationLink(token) {
+  return `${window.location.origin}/activate.html?token=${encodeURIComponent(token)}`;
 }
 
 function placeholder(title, text) {

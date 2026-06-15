@@ -38,6 +38,12 @@ class SelectionControllerTest {
     }
 
     @Test
+    void publicActivationPageIsAvailableWithoutBasicAuth() throws Exception {
+        mockMvc.perform(get("/activate.html"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void adminSnapshotReturnsFullSeededMvpState() throws Exception {
         mockMvc.perform(get("/api/snapshot").header(HttpHeaders.AUTHORIZATION, ADMIN_AUTH))
                 .andExpect(status().isOk())
