@@ -8,11 +8,13 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import ru.fcref.system.config.AppProperties;
@@ -83,8 +85,31 @@ public class SelectionService {
         );
     }
 
+    public synchronized SelectionSnapshot snapshotFor(UserAccount viewer) {
+        if (viewer.hasRole(Role.ADMIN)) {
+            return snapshot();
+        }
+
+        List<Candidate> visibleCandidates = visibleCandidates(viewer);
+        List<Invitation> visibleInvitations = visibleInvitations(viewer);
+        Set<String> visibleCandidateIds = visibleCandidates.stream()
+                .map(Candidate::getId)
+                .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+        Set<String> visibleInvitationIds = visibleInvitations.stream()
+                .map(Invitation::getId)
+                .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+
+        return new SelectionSnapshot(
+                visibleUsers(viewer, visibleCandidates, visibleInvitations),
+                visibleInvitations,
+                visibleCandidates,
+                List.of(activeRegulation()),
+                visibleEvents(viewer, visibleCandidateIds, visibleInvitationIds)
+        );
+    }
+
     public synchronized Invitation createInvitation(String actorUserId, String comment, String requestId) {
-        UserAccount actor = requireRole(actorUserId, Role.MEMBER);
+        UserAccount actor = requireAnyRole(actorUserId, Role.MEMBER, Role.PRIVILEGED_MEMBER);
         if (requestId != null && !requestId.isBlank()) {
             String key = "invitation:" + actor.getId() + ":" + requestId;
             String existingId = idempotencyIndex.get(key);
@@ -406,6 +431,98 @@ public class SelectionService {
         return target;
     }
 
+    private List<Candidate> visibleCandidates(UserAccount viewer) {
+        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+            return List.copyOf(candidates.values());
+        }
+        if (viewer.hasRole(Role.MEMBER)) {
+            return candidates.values().stream()
+                    .filter(candidate -> viewer.getId().equals(candidate.getInvitedByUserId()))
+                    .toList();
+        }
+        if (viewer.hasRole(Role.CANDIDATE)) {
+            return candidates.values().stream()
+                    .filter(candidate -> viewer.getId().equals(candidate.getCandidateUserId()))
+                    .toList();
+        }
+        return List.of();
+    }
+
+    private List<Invitation> visibleInvitations(UserAccount viewer) {
+        if (viewer.hasRole(Role.MEMBER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+            return invitations.values().stream()
+                    .filter(invitation -> viewer.getId().equals(invitation.getAuthorUserId()))
+                    .toList();
+        }
+        return List.of();
+    }
+
+    private List<UserAccount> visibleUsers(
+            UserAccount viewer,
+            List<Candidate> visibleCandidates,
+            List<Invitation> visibleInvitations
+    ) {
+        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+            return userDirectory.listUsers();
+        }
+
+        Set<String> userIds = new LinkedHashSet<>();
+        userIds.add(viewer.getId());
+        visibleCandidates.stream()
+                .map(Candidate::getInvitedByUserId)
+                .filter(Objects::nonNull)
+                .forEach(userIds::add);
+        visibleCandidates.stream()
+                .map(Candidate::getCandidateUserId)
+                .filter(Objects::nonNull)
+                .forEach(userIds::add);
+        visibleInvitations.stream()
+                .map(Invitation::getAuthorUserId)
+                .filter(Objects::nonNull)
+                .forEach(userIds::add);
+
+        return userDirectory.listUsers().stream()
+                .filter(user -> userIds.contains(user.getId()))
+                .toList();
+    }
+
+    private List<EventRecord> visibleEvents(
+            UserAccount viewer,
+            Set<String> visibleCandidateIds,
+            Set<String> visibleInvitationIds
+    ) {
+        return events.stream()
+                .filter(event -> canSeeEvent(viewer, event, visibleCandidateIds, visibleInvitationIds))
+                .sorted(Comparator.comparing(EventRecord::occurredAt).reversed())
+                .toList();
+    }
+
+    private boolean canSeeEvent(
+            UserAccount viewer,
+            EventRecord event,
+            Set<String> visibleCandidateIds,
+            Set<String> visibleInvitationIds
+    ) {
+        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+            return true;
+        }
+        if (viewer.hasRole(Role.CANDIDATE) && isInternalCandidateEvent(event.type())) {
+            return false;
+        }
+        return viewer.getId().equals(event.actorUserId())
+                || visibleCandidateIds.contains(event.candidateId())
+                || visibleInvitationIds.contains(event.aggregateId());
+    }
+
+    private boolean isInternalCandidateEvent(EventType type) {
+        return type == EventType.VOTE_OPENED
+                || type == EventType.VOTE_CAST
+                || type == EventType.VOTE_CLOSED
+                || type == EventType.COMPLAINT_CREATED
+                || type == EventType.ROLE_ASSIGNED
+                || type == EventType.ROLE_REVOKED;
+    }
+
     private void seed() {
         SelectionRegulation defaultRegulation = new SelectionRegulation(
                 "reg-1",
@@ -440,20 +557,48 @@ public class SelectionService {
         );
         invitations.put(activatedInvitation.getId(), activatedInvitation);
 
-        seedCandidate("candidate-vote", "Петрова Мария Сергеевна", activatedInvitation.getId(), "voting", CandidateStatus.VOTING);
-        seedCandidate("candidate-block", "Смирнова Анна Сергеевна", activatedInvitation.getId(), "interview", CandidateStatus.IN_PROGRESS);
-        seedCandidate("candidate-stage", "Кузнецов Иван Андреевич", activatedInvitation.getId(), "task", CandidateStatus.IN_PROGRESS);
+        seedCandidate(
+                "candidate-vote",
+                "Петрова Мария Сергеевна",
+                null,
+                activatedInvitation.getId(),
+                "voting",
+                CandidateStatus.VOTING
+        );
+        seedCandidate(
+                "candidate-block",
+                "Смирнова Анна Сергеевна",
+                null,
+                activatedInvitation.getId(),
+                "interview",
+                CandidateStatus.IN_PROGRESS
+        );
+        seedCandidate(
+                "candidate-stage",
+                "Кузнецов Иван Андреевич",
+                "candidate-user-1",
+                activatedInvitation.getId(),
+                "task",
+                CandidateStatus.IN_PROGRESS
+        );
 
         Candidate votingCandidate = candidates.get("candidate-vote");
         VotingSession session = createVotingSession("admin-1", 60);
         votingCandidate.getVotingSessions().add(session);
     }
 
-    private void seedCandidate(String id, String fullName, String invitationId, String currentStageId, CandidateStatus status) {
+    private void seedCandidate(
+            String id,
+            String fullName,
+            String candidateUserId,
+            String invitationId,
+            String currentStageId,
+            CandidateStatus status
+    ) {
         Candidate candidate = new Candidate(
                 id,
                 fullName,
-                "candidate-user-1",
+                candidateUserId,
                 invitationId,
                 "member-1",
                 now().minus(3, ChronoUnit.DAYS),
