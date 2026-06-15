@@ -84,6 +84,10 @@ public class StageProgress {
         this.submittedResult = submittedResult;
         this.submittedAt = submittedAt;
         this.state = StageState.SUBMITTED;
+        this.verdict = null;
+        this.report = null;
+        this.decidedByUserId = null;
+        this.decidedAt = null;
     }
 
     public Verdict getVerdict() {

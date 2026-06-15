@@ -58,6 +58,7 @@ const roleLabels = {
 const statusLabels = {
   REGISTERED: 'Зарегистрирован',
   IN_PROGRESS: 'В процессе',
+  IN_REVIEW: 'На проверке',
   VOTING: 'Голосование',
   PASSED: 'Прошел',
   FAILED: 'Не прошел',
@@ -429,9 +430,11 @@ function renderVoting() {
     return emptyCandidatePanel();
   }
   const current = currentStage(candidate);
-  const session = candidate.votingSessions.find((item) => item.status === 'OPEN') || candidate.votingSessions.at(-1);
+  const openSession = candidate.votingSessions.find((item) => item.status === 'OPEN');
+  const session = openSession || candidate.votingSessions.at(-1);
   const canManageVoting = hasRole('ADMIN');
   const canVote = hasRole('PRIVILEGED_MEMBER');
+  const canOpenVote = canManageVoting && !openSession && current?.state === 'PASSED';
   const votePanel = canVote ? `
     <div class="panel">
       <h2>Голос</h2>
@@ -471,8 +474,8 @@ function renderVoting() {
         </div>
         ${canManageVoting ? `
           <div class="actions toolbar">
-            <button class="btn" type="button" id="open-vote">Открыть голосование</button>
-            <button class="btn" type="button" id="close-vote" ${session?.status === 'OPEN' ? '' : 'disabled'}>Закрыть голосование</button>
+            <button class="btn" type="button" id="open-vote" ${canOpenVote ? '' : 'disabled'}>Открыть голосование</button>
+            <button class="btn" type="button" id="close-vote" ${openSession ? '' : 'disabled'}>Закрыть голосование</button>
           </div>
         ` : ''}
       </div>
@@ -547,6 +550,7 @@ function renderStage() {
   const canVerdict = hasRole('INTERVIEWER') || hasRole('ADMIN');
   const canPickCandidate = !hasRole('CANDIDATE') || hasRole('ADMIN') || hasRole('INTERVIEWER');
   const submitDisabled = !current || ['SUBMITTED', 'PASSED', 'FAILED'].includes(current.state) || candidate.status === 'BLOCKED';
+  const verdictReady = canRecordVerdict(candidate, current, rule);
 
   return `
     <section class="grid grid--two">
@@ -565,7 +569,7 @@ function renderStage() {
         ` : ''}
       </div>
       <div class="panel">
-        <h2>Вердикт</h2>
+        <h2>Результат проверки</h2>
         ${canVerdict ? `
           <form id="verdict-form">
             <label class="field">
@@ -580,7 +584,7 @@ function renderStage() {
               <span>Отчет интервьюера</span>
               <textarea name="report">Результат проверен, решение зафиксировано</textarea>
             </label>
-            <button class="btn" type="submit">Зафиксировать вердикт</button>
+            <button class="btn" type="submit" ${verdictReady ? '' : 'disabled'}>Зафиксировать результат</button>
           </form>
         ` : renderCandidateResult(current)}
       </div>
@@ -622,6 +626,16 @@ function renderCandidateResult(current) {
       <p class="muted">${escapeHtml(current.report || '')}</p>
     </div>
   `;
+}
+
+function canRecordVerdict(candidate, current, rule) {
+  if (!candidate || !current || ['BLOCKED', 'PASSED', 'FAILED', 'VOTING'].includes(candidate.status)) {
+    return false;
+  }
+  if (rule?.requiresSubmission) {
+    return current.state === 'SUBMITTED';
+  }
+  return current.state === 'AVAILABLE' || current.state === 'RETRY';
 }
 
 function renderJournal() {
@@ -857,6 +871,7 @@ function nextActionFor(candidate, current) {
   if (candidate.status === 'BLOCKED') return 'Остановлен';
   if (candidate.status === 'PASSED') return 'Завершен';
   if (candidate.status === 'FAILED') return 'Завершен';
+  if (candidate.status === 'IN_REVIEW') return 'Проверка результата';
   if (!current) return 'Назначить этап';
   if (candidate.status === 'VOTING') return 'Голосование';
   if (current.state === 'SUBMITTED') return 'Вердикт';

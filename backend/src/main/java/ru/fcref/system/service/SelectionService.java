@@ -251,6 +251,7 @@ public class SelectionService {
             idempotencyIndex.put(key, current.getId());
         }
         current.submit(result.trim(), now());
+        candidate.setStatus(CandidateStatus.IN_REVIEW);
         event(
                 EventType.STAGE_RESULT_SUBMITTED,
                 actor.getId(),
@@ -268,14 +269,17 @@ public class SelectionService {
         Candidate candidate = requireCandidate(candidateId);
         ensureCandidateCanMove(candidate);
         StageProgress current = requireCurrentStage(candidate);
+        SelectionStage stage = requireActiveStage(current.getStageId());
+        ensureStageReadyForVerdict(current, stage);
         current.decide(verdict, report.trim(), actorUserId, now());
 
         if (verdict == Verdict.PASSED) {
             current.setState(StageState.PASSED);
-            advanceCandidate(candidate, actorUserId);
+            openVotingForCurrentStage(candidate, actorUserId);
         } else if (verdict == Verdict.RETRY && current.getAttemptNumber() < current.getAttemptLimit()) {
             current.setAttemptNumber(current.getAttemptNumber() + 1);
             current.setState(StageState.RETRY);
+            candidate.setStatus(CandidateStatus.IN_PROGRESS);
         } else {
             current.setState(StageState.FAILED);
             candidate.setStatus(CandidateStatus.FAILED);
@@ -300,14 +304,7 @@ public class SelectionService {
             return existing.get();
         }
 
-        StageProgress current = requireCurrentStage(candidate);
-        SelectionStage stage = requireActiveStage(current.getStageId());
-        int threshold = stage.thresholdPercent() != null ? stage.thresholdPercent() : 60;
-        candidate.setStatus(CandidateStatus.VOTING);
-        VotingSession session = createVotingSession(actorUserId, threshold);
-        candidate.getVotingSessions().add(session);
-        event(EventType.VOTE_OPENED, actorUserId, candidate.getId(), session.getId(), Map.of("thresholdPercent", threshold));
-        return session;
+        return openVotingForCurrentStage(candidate, actorUserId);
     }
 
     public synchronized Vote castVote(String actorUserId, String candidateId, VoteChoice choice, String reason) {
@@ -435,14 +432,10 @@ public class SelectionService {
         if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
             return List.copyOf(candidates.values());
         }
-        if (viewer.hasRole(Role.MEMBER)) {
+        if (viewer.hasRole(Role.MEMBER) || viewer.hasRole(Role.CANDIDATE)) {
             return candidates.values().stream()
-                    .filter(candidate -> viewer.getId().equals(candidate.getInvitedByUserId()))
-                    .toList();
-        }
-        if (viewer.hasRole(Role.CANDIDATE)) {
-            return candidates.values().stream()
-                    .filter(candidate -> viewer.getId().equals(candidate.getCandidateUserId()))
+                    .filter(candidate -> viewer.getId().equals(candidate.getInvitedByUserId())
+                            || viewer.getId().equals(candidate.getCandidateUserId()))
                     .toList();
         }
         return List.of();
@@ -562,7 +555,7 @@ public class SelectionService {
                 "Петрова Мария Сергеевна",
                 null,
                 activatedInvitation.getId(),
-                "voting",
+                "task",
                 CandidateStatus.VOTING
         );
         seedCandidate(
@@ -583,7 +576,7 @@ public class SelectionService {
         );
 
         Candidate votingCandidate = candidates.get("candidate-vote");
-        VotingSession session = createVotingSession("admin-1", 60);
+        VotingSession session = createVotingSession("admin-1", votingCandidate.getCurrentStageId(), 60);
         votingCandidate.getVotingSessions().add(session);
     }
 
@@ -608,7 +601,7 @@ public class SelectionService {
         for (SelectionStage stage : activeRegulation().getStages()) {
             StageState state;
             if (stage.id().equals(currentStageId)) {
-                state = StageState.AVAILABLE;
+                state = status == CandidateStatus.VOTING ? StageState.PASSED : StageState.AVAILABLE;
             } else if (stageOrder(stage.id()) < stageOrder(currentStageId)) {
                 state = StageState.PASSED;
             } else {
@@ -623,8 +616,16 @@ public class SelectionService {
         return List.of(
                 new SelectionStage("form", "Анкета кандидата", StageType.FORM, 1, 7, null, "Заполненная анкета", true),
                 new SelectionStage("task", "Первое испытание", StageType.TASK, 2, 7, 70, "Результат задания не ниже порога", true),
-                new SelectionStage("interview", "Интервью с наставником", StageType.INTERVIEW, 1, 5, null, "Отчет интервьюера", false),
-                new SelectionStage("voting", "Голосование участников", StageType.VOTE, 1, 3, 60, "Не менее 60% голосов поддержки", false)
+                new SelectionStage(
+                        "interview",
+                        "Интервью с наставником",
+                        StageType.INTERVIEW,
+                        1,
+                        5,
+                        60,
+                        "Отчет интервьюера и голоса участников",
+                        false
+                )
         );
     }
 
@@ -641,15 +642,36 @@ public class SelectionService {
         );
     }
 
-    private VotingSession createVotingSession(String actorUserId, int thresholdPercent) {
+    private VotingSession createVotingSession(String actorUserId, String stageId, int thresholdPercent) {
         votingSessionSequence++;
         return new VotingSession(
                 "voting-" + votingSessionSequence,
+                stageId,
                 actorUserId,
                 now(),
                 now().plus(3, ChronoUnit.DAYS),
                 thresholdPercent
         );
+    }
+
+    private VotingSession openVotingForCurrentStage(Candidate candidate, String actorUserId) {
+        Optional<VotingSession> existing = candidate.openVotingSession();
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        StageProgress current = requireCurrentStage(candidate);
+        if (current.getState() != StageState.PASSED) {
+            throw new BusinessRuleException("STAGE_NOT_READY_FOR_VOTING", "Этап должен быть пройден до открытия голосования");
+        }
+
+        SelectionStage stage = requireActiveStage(current.getStageId());
+        int threshold = stage.thresholdPercent() != null ? stage.thresholdPercent() : 60;
+        candidate.setStatus(CandidateStatus.VOTING);
+        VotingSession session = createVotingSession(actorUserId, current.getStageId(), threshold);
+        candidate.getVotingSessions().add(session);
+        event(EventType.VOTE_OPENED, actorUserId, candidate.getId(), session.getId(), Map.of("thresholdPercent", threshold));
+        return session;
     }
 
     private void advanceCandidate(Candidate candidate, String actorUserId) {
@@ -663,6 +685,7 @@ public class SelectionService {
         }
         if (currentIndex < 0 || currentIndex == stages.size() - 1) {
             candidate.setStatus(CandidateStatus.PASSED);
+            promoteCandidateToMember(candidate, actorUserId);
             return;
         }
 
@@ -681,7 +704,7 @@ public class SelectionService {
         event(EventType.STAGE_ASSIGNED, actorUserId, candidate.getId(), nextStage.id(), Map.of("stageName", nextStage.name()));
         if (nextStage.type() == StageType.VOTE && candidate.openVotingSession().isEmpty()) {
             int thresholdPercent = nextStage.thresholdPercent() != null ? nextStage.thresholdPercent() : 60;
-            VotingSession session = createVotingSession(actorUserId, thresholdPercent);
+            VotingSession session = createVotingSession(actorUserId, nextStage.id(), thresholdPercent);
             candidate.getVotingSessions().add(session);
             event(
                     EventType.VOTE_OPENED,
@@ -691,6 +714,35 @@ public class SelectionService {
                     Map.of("thresholdPercent", session.getThresholdPercent())
             );
         }
+    }
+
+    private void ensureStageReadyForVerdict(StageProgress current, SelectionStage stage) {
+        if (stage.requiresSubmission() && current.getState() != StageState.SUBMITTED) {
+            throw new BusinessRuleException("STAGE_NOT_READY_FOR_VERDICT", "Сначала кандидат должен отправить результат этапа");
+        }
+        if (!stage.requiresSubmission()
+                && current.getState() != StageState.AVAILABLE
+                && current.getState() != StageState.RETRY) {
+            throw new BusinessRuleException("STAGE_NOT_READY_FOR_VERDICT", "Этап уже обработан или ожидает другого действия");
+        }
+    }
+
+    private void promoteCandidateToMember(Candidate candidate, String actorUserId) {
+        if (candidate.getCandidateUserId() == null) {
+            return;
+        }
+        UserAccount account = userDirectory.findById(candidate.getCandidateUserId()).orElse(null);
+        if (account == null || account.hasRole(Role.MEMBER)) {
+            return;
+        }
+        userDirectory.assignRole(candidate.getCandidateUserId(), Role.MEMBER);
+        event(
+                EventType.ROLE_ASSIGNED,
+                actorUserId,
+                candidate.getId(),
+                candidate.getCandidateUserId(),
+                Map.of("role", Role.MEMBER.name())
+        );
     }
 
     private void validateRegulationStages(List<SelectionStage> stages) {

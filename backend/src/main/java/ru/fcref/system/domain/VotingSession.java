@@ -7,6 +7,7 @@ import java.util.List;
 public class VotingSession {
 
     private final String id;
+    private final String stageId;
     private final String openedByUserId;
     private final Instant openedAt;
     private final Instant closesAt;
@@ -17,8 +18,16 @@ public class VotingSession {
     private Instant closedAt;
     private String closedByUserId;
 
-    public VotingSession(String id, String openedByUserId, Instant openedAt, Instant closesAt, int thresholdPercent) {
+    public VotingSession(
+            String id,
+            String stageId,
+            String openedByUserId,
+            Instant openedAt,
+            Instant closesAt,
+            int thresholdPercent
+    ) {
         this.id = id;
+        this.stageId = stageId;
         this.openedByUserId = openedByUserId;
         this.openedAt = openedAt;
         this.closesAt = closesAt;
@@ -28,6 +37,10 @@ public class VotingSession {
 
     public String getId() {
         return id;
+    }
+
+    public String getStageId() {
+        return stageId;
     }
 
     public String getOpenedByUserId() {

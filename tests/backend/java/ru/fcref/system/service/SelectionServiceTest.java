@@ -23,7 +23,9 @@ import ru.fcref.system.domain.Role;
 import ru.fcref.system.domain.StageProgress;
 import ru.fcref.system.domain.StageState;
 import ru.fcref.system.domain.UserAccount;
+import ru.fcref.system.domain.Verdict;
 import ru.fcref.system.domain.VoteChoice;
+import ru.fcref.system.domain.VoteStatus;
 
 class SelectionServiceTest {
 
@@ -128,6 +130,7 @@ class SelectionServiceTest {
 
         assertThat(duplicate.getId()).isEqualTo(first.getId());
         assertThat(duplicate.getState()).isEqualTo(StageState.SUBMITTED);
+        assertThat(candidate("candidate-stage").getStatus()).isEqualTo(CandidateStatus.IN_REVIEW);
     }
 
     @Test
@@ -136,6 +139,61 @@ class SelectionServiceTest {
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("ACCESS_DENIED");
+    }
+
+    @Test
+    void passedVerdictOpensVotingAndPreventsDuplicateVerdict() {
+        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "review-stage-result");
+
+        StageProgress verdict = service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "accepted");
+        Candidate candidate = candidate("candidate-stage");
+
+        assertThat(verdict.getState()).isEqualTo(StageState.PASSED);
+        assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.VOTING);
+        assertThat(candidate.openVotingSession()).isPresent();
+        assertThat(candidate.openVotingSession().orElseThrow().getStatus()).isEqualTo(VoteStatus.OPEN);
+        assertThatThrownBy(() -> service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "again"))
+                .isInstanceOf(BusinessRuleException.class)
+                .extracting("code")
+                .isEqualTo("STAGE_NOT_READY_FOR_VERDICT");
+    }
+
+    @Test
+    void acceptedVoteAdvancesCandidateToNextStage() {
+        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "advance-stage-result");
+        service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "accepted");
+        service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support");
+
+        service.closeVote("admin-1", "candidate-stage");
+        Candidate candidate = candidate("candidate-stage");
+
+        assertThat(candidate.getCurrentStageId()).isEqualTo("interview");
+        assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.IN_PROGRESS);
+        assertThat(candidate.currentStage()).isPresent();
+        assertThat(candidate.currentStage().orElseThrow().getState()).isEqualTo(StageState.AVAILABLE);
+    }
+
+    @Test
+    void finalAcceptedVotePromotesCandidateToMember() {
+        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "final-stage-result");
+        service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "accepted");
+        service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support task");
+        service.closeVote("admin-1", "candidate-stage");
+
+        service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "interview accepted");
+        service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support interview");
+        service.closeVote("admin-1", "candidate-stage");
+
+        Candidate candidate = candidate("candidate-stage");
+        assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.PASSED);
+        assertThat(userDirectory.findById("candidate-user-1").orElseThrow().getRoles()).contains(Role.MEMBER);
+    }
+
+    private Candidate candidate(String candidateId) {
+        return service.snapshot().candidates().stream()
+                .filter(candidate -> candidate.getId().equals(candidateId))
+                .findFirst()
+                .orElseThrow();
     }
 
     private static final class FakeUserDirectory implements UserDirectory {
