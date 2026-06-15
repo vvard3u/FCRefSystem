@@ -1,3 +1,5 @@
+name: fcrefsystem
+
 services:
   postgres:
     image: postgres:16
