@@ -161,8 +161,8 @@ public class JdbcSelectionStateRepository implements SelectionStateRepository {
                 insert into candidate_stage_progress (
                     id, candidate_id, stage_id, stage_name, stage_type, attempt_limit, state,
                     attempt_number, submitted_result, submitted_at, verdict, report,
-                    decided_by_user_id, decided_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    decided_by_user_id, decided_at, assigned_interviewer_user_id
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 stage.getId(),
                 candidateId,
@@ -177,7 +177,8 @@ public class JdbcSelectionStateRepository implements SelectionStateRepository {
                 stage.getVerdict() != null ? stage.getVerdict().name() : null,
                 stage.getReport(),
                 stage.getDecidedByUserId(),
-                timestamp(stage.getDecidedAt())
+                timestamp(stage.getDecidedAt()),
+                stage.getAssignedInterviewerUserId()
         );
     }
 

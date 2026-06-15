@@ -126,7 +126,7 @@ public class SelectionService {
     }
 
     public synchronized Invitation createInvitation(String actorUserId, String comment, String requestId) {
-        UserAccount actor = requireAnyRole(actorUserId, Role.MEMBER, Role.PRIVILEGED_MEMBER);
+        UserAccount actor = requireRole(actorUserId, Role.MEMBER);
         if (requestId != null && !requestId.isBlank()) {
             String key = "invitation:" + actor.getId() + ":" + requestId;
             String existingId = idempotencyIndex.get(key);
@@ -201,13 +201,15 @@ public class SelectionService {
                 CandidateStatus.IN_PROGRESS,
                 firstStage.id()
         );
-        candidate.getStages().add(progressFrom(firstStage, StageState.AVAILABLE, 1));
+        StageProgress firstProgress = progressFrom(firstStage, StageState.AVAILABLE, 1);
+        assignRandomInterviewer(candidate, firstProgress);
+        candidate.getStages().add(firstProgress);
         candidates.put(candidate.getId(), candidate);
         invitation.activate(candidate.getId(), now);
 
         event(EventType.INVITATION_ACTIVATED, null, candidate.getId(), invitation.getId(), Map.of("token", token));
         event(EventType.CANDIDATE_REGISTERED, null, candidate.getId(), candidate.getId(), Map.of("fullName", candidate.getFullName()));
-        event(EventType.STAGE_ASSIGNED, null, candidate.getId(), firstStage.id(), Map.of("stageName", firstStage.name()));
+        event(EventType.STAGE_ASSIGNED, null, candidate.getId(), firstStage.id(), stageAssignedDetails(firstStage, firstProgress));
         return new ActivationResult(candidate, candidateUsername, candidatePassword);
     }
 
@@ -280,12 +282,13 @@ public class SelectionService {
     }
 
     public synchronized StageProgress recordVerdict(String actorUserId, String candidateId, Verdict verdict, String report) {
-        requireAnyRole(actorUserId, Role.INTERVIEWER, Role.ADMIN);
+        UserAccount actor = requireUser(actorUserId);
         Objects.requireNonNull(verdict, "verdict");
         requireText(report, "report", "Отчет по вердикту обязателен");
         Candidate candidate = requireCandidate(candidateId);
         ensureCandidateCanMove(candidate);
         StageProgress current = requireCurrentStage(candidate);
+        requireAssignedInterviewerOrAdmin(actor, current);
         SelectionStage stage = requireActiveStage(current.getStageId());
         ensureStageReadyForVerdict(current, stage);
         current.decide(verdict, report.trim(), actorUserId, now());
@@ -390,10 +393,11 @@ public class SelectionService {
     }
 
     public synchronized BlockRecord blockCandidate(String actorUserId, String candidateId, String category, String reason) {
-        requireAnyRole(actorUserId, Role.INTERVIEWER, Role.ADMIN);
+        UserAccount actor = requireUser(actorUserId);
         requireText(category, "category", "Категория блокировки обязательна");
         requireText(reason, "reason", "Причина блокировки обязательна");
         Candidate candidate = requireCandidate(candidateId);
+        requireAssignedInterviewerOrAdmin(actor, requireCurrentStage(candidate));
         if (candidate.getStatus() == CandidateStatus.BLOCKED) {
             throw new BusinessRuleException("CANDIDATE_ALREADY_BLOCKED", "Кандидат уже заблокирован");
         }
@@ -446,20 +450,21 @@ public class SelectionService {
     }
 
     private List<Candidate> visibleCandidates(UserAccount viewer) {
-        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
             return List.copyOf(candidates.values());
         }
         if (viewer.hasRole(Role.MEMBER) || viewer.hasRole(Role.CANDIDATE)) {
             return candidates.values().stream()
                     .filter(candidate -> viewer.getId().equals(candidate.getInvitedByUserId())
-                            || viewer.getId().equals(candidate.getCandidateUserId()))
+                            || viewer.getId().equals(candidate.getCandidateUserId())
+                            || isCurrentStageAssignedTo(candidate, viewer.getId()))
                     .toList();
         }
         return List.of();
     }
 
     private List<Invitation> visibleInvitations(UserAccount viewer) {
-        if (viewer.hasRole(Role.MEMBER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.MEMBER)) {
             return invitations.values().stream()
                     .filter(invitation -> viewer.getId().equals(invitation.getAuthorUserId()))
                     .toList();
@@ -472,7 +477,7 @@ public class SelectionService {
             List<Candidate> visibleCandidates,
             List<Invitation> visibleInvitations
     ) {
-        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
             return userDirectory.listUsers();
         }
 
@@ -484,6 +489,11 @@ public class SelectionService {
                 .forEach(userIds::add);
         visibleCandidates.stream()
                 .map(Candidate::getCandidateUserId)
+                .filter(Objects::nonNull)
+                .forEach(userIds::add);
+        visibleCandidates.stream()
+                .flatMap(candidate -> candidate.getStages().stream())
+                .map(StageProgress::getAssignedInterviewerUserId)
                 .filter(Objects::nonNull)
                 .forEach(userIds::add);
         visibleInvitations.stream()
@@ -513,7 +523,7 @@ public class SelectionService {
             Set<String> visibleCandidateIds,
             Set<String> visibleInvitationIds
     ) {
-        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
             return true;
         }
         if (viewer.hasRole(Role.CANDIDATE) && isInternalCandidateEvent(event.type())) {
@@ -626,6 +636,7 @@ public class SelectionService {
             }
             candidate.getStages().add(progressFrom(stage, state, 1));
         }
+        assignSeedInterviewer(candidate);
         candidates.put(candidate.getId(), candidate);
     }
 
@@ -657,6 +668,52 @@ public class SelectionService {
                 state,
                 attemptNumber
         );
+    }
+
+    private void assignSeedInterviewer(Candidate candidate) {
+        StageProgress current = requireCurrentStage(candidate);
+        Optional<UserAccount> demoInterviewer = userDirectory.findById("interviewer-1")
+                .filter(user -> user.hasRole(Role.MEMBER));
+        if (demoInterviewer.isPresent()) {
+            current.assignInterviewer(demoInterviewer.get().getId());
+            return;
+        }
+        assignRandomInterviewer(candidate, current);
+    }
+
+    private void assignRandomInterviewer(Candidate candidate, StageProgress progress) {
+        progress.assignInterviewer(selectRandomInterviewerUserId(candidate));
+    }
+
+    private String selectRandomInterviewerUserId(Candidate candidate) {
+        List<UserAccount> eligibleMembers = eligibleInterviewers(candidate, true);
+        if (eligibleMembers.isEmpty()) {
+            eligibleMembers = eligibleInterviewers(candidate, false);
+        }
+        if (eligibleMembers.isEmpty()) {
+            throw new BusinessRuleException(
+                    "INTERVIEWER_NOT_AVAILABLE",
+                    "No active community members available for interviewer assignment"
+            );
+        }
+        return eligibleMembers.get(secureRandom.nextInt(eligibleMembers.size())).getId();
+    }
+
+    private List<UserAccount> eligibleInterviewers(Candidate candidate, boolean avoidConflicts) {
+        return userDirectory.listUsers().stream()
+                .filter(user -> user.hasRole(Role.MEMBER))
+                .filter(user -> !user.getId().equals(candidate.getCandidateUserId()))
+                .filter(user -> !avoidConflicts || !user.getId().equals(candidate.getInvitedByUserId()))
+                .filter(user -> !avoidConflicts || !user.hasRole(Role.ADMIN))
+                .sorted(Comparator.comparing(UserAccount::getId))
+                .toList();
+    }
+
+    private Map<String, Object> stageAssignedDetails(SelectionStage stage, StageProgress progress) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("stageName", stage.name());
+        details.put("interviewerUserId", progress.getAssignedInterviewerUserId());
+        return details;
     }
 
     private VotingSession createVotingSession(String actorUserId, String stageId, int thresholdPercent) {
@@ -718,7 +775,14 @@ public class SelectionService {
                 });
         nextProgress.setState(StageState.AVAILABLE);
         candidate.setStatus(nextStage.type() == StageType.VOTE ? CandidateStatus.VOTING : CandidateStatus.IN_PROGRESS);
-        event(EventType.STAGE_ASSIGNED, actorUserId, candidate.getId(), nextStage.id(), Map.of("stageName", nextStage.name()));
+        assignRandomInterviewer(candidate, nextProgress);
+        event(
+                EventType.STAGE_ASSIGNED,
+                actorUserId,
+                candidate.getId(),
+                nextStage.id(),
+                stageAssignedDetails(nextStage, nextProgress)
+        );
         if (nextStage.type() == StageType.VOTE && candidate.openVotingSession().isEmpty()) {
             int thresholdPercent = nextStage.thresholdPercent() != null ? nextStage.thresholdPercent() : 60;
             VotingSession session = createVotingSession(actorUserId, nextStage.id(), thresholdPercent);
@@ -745,20 +809,55 @@ public class SelectionService {
     }
 
     private void promoteCandidateToMember(Candidate candidate, String actorUserId) {
+        promoteCandidateAccount(candidate, actorUserId);
+        rewardInviterWithPrivilegedStatus(candidate, actorUserId);
+    }
+
+    private void promoteCandidateAccount(Candidate candidate, String actorUserId) {
         if (candidate.getCandidateUserId() == null) {
             return;
         }
         UserAccount account = userDirectory.findById(candidate.getCandidateUserId()).orElse(null);
-        if (account == null || account.hasRole(Role.MEMBER)) {
+        if (account == null) {
             return;
         }
-        userDirectory.assignRole(candidate.getCandidateUserId(), Role.MEMBER);
+        if (!account.hasRole(Role.MEMBER)) {
+            userDirectory.assignRole(candidate.getCandidateUserId(), Role.MEMBER);
+            event(
+                    EventType.ROLE_ASSIGNED,
+                    actorUserId,
+                    candidate.getId(),
+                    candidate.getCandidateUserId(),
+                    Map.of("role", Role.MEMBER.name())
+            );
+        }
+        if (account.hasRole(Role.CANDIDATE)) {
+            userDirectory.revokeRole(candidate.getCandidateUserId(), Role.CANDIDATE);
+            event(
+                    EventType.ROLE_REVOKED,
+                    actorUserId,
+                    candidate.getId(),
+                    candidate.getCandidateUserId(),
+                    Map.of("role", Role.CANDIDATE.name())
+            );
+        }
+    }
+
+    private void rewardInviterWithPrivilegedStatus(Candidate candidate, String actorUserId) {
+        if (candidate.getInvitedByUserId() == null) {
+            return;
+        }
+        UserAccount inviter = userDirectory.findById(candidate.getInvitedByUserId()).orElse(null);
+        if (inviter == null || inviter.hasRole(Role.PRIVILEGED_MEMBER)) {
+            return;
+        }
+        userDirectory.assignRole(candidate.getInvitedByUserId(), Role.PRIVILEGED_MEMBER);
         event(
                 EventType.ROLE_ASSIGNED,
                 actorUserId,
                 candidate.getId(),
-                candidate.getCandidateUserId(),
-                Map.of("role", Role.MEMBER.name())
+                candidate.getInvitedByUserId(),
+                Map.of("role", Role.PRIVILEGED_MEMBER.name(), "reason", "SUCCESSFUL_REFERRAL")
         );
     }
 
@@ -803,6 +902,20 @@ public class SelectionService {
         }
     }
 
+    private void requireAssignedInterviewerOrAdmin(UserAccount actor, StageProgress current) {
+        if (actor.hasRole(Role.ADMIN) || actor.getId().equals(current.getAssignedInterviewerUserId())) {
+            return;
+        }
+        throw new BusinessRuleException("ACCESS_DENIED", "Недостаточно прав для выполнения действия");
+    }
+
+    private boolean isCurrentStageAssignedTo(Candidate candidate, String userId) {
+        return candidate.currentStage()
+                .map(StageProgress::getAssignedInterviewerUserId)
+                .map(userId::equals)
+                .orElse(false);
+    }
+
     private StageProgress requireCurrentStage(Candidate candidate) {
         return candidate.currentStage()
                 .orElseThrow(() -> new BusinessRuleException("CURRENT_STAGE_NOT_FOUND", "Текущий этап кандидата не найден"));
@@ -830,16 +943,6 @@ public class SelectionService {
             }
         }
         return Integer.MAX_VALUE;
-    }
-
-    private UserAccount requireAnyRole(String actorUserId, Role... roles) {
-        UserAccount user = requireUser(actorUserId);
-        for (Role role : roles) {
-            if (user.hasRole(role)) {
-                return user;
-            }
-        }
-        throw new BusinessRuleException("ACCESS_DENIED", "Недостаточно прав для выполнения действия");
     }
 
     private UserAccount requireRole(String actorUserId, Role role) {

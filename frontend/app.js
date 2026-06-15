@@ -3,7 +3,7 @@ const viewDefinitions = [
     id: 'invitations',
     label: 'Приглашения',
     title: 'Создание реферального приглашения',
-    roles: ['MEMBER', 'PRIVILEGED_MEMBER']
+    roles: ['MEMBER']
   },
   {
     id: 'regulation',
@@ -21,13 +21,13 @@ const viewDefinitions = [
     id: 'blocking',
     label: 'Блокировка',
     title: 'Блокировка кандидата',
-    roles: ['INTERVIEWER', 'ADMIN']
+    roles: ['ADMIN']
   },
   {
     id: 'stage',
     label: 'Этап отбора',
     title: 'Прохождение этапа отбора',
-    roles: ['CANDIDATE', 'INTERVIEWER', 'ADMIN']
+    roles: ['CANDIDATE', 'ADMIN']
   },
   {
     id: 'journal',
@@ -498,6 +498,7 @@ function renderBlocking() {
   if (!candidate) {
     return emptyCandidatePanel();
   }
+  const canBlock = hasRole('ADMIN') || isAssignedInterviewer(candidate);
   return `
     <section class="grid grid--two">
       <div class="panel">
@@ -507,7 +508,7 @@ function renderBlocking() {
       </div>
       <div class="panel">
         <h2>Блокировка</h2>
-        <form id="block-form">
+        ${canBlock ? `<form id="block-form">
           <label class="field">
             <span>Категория нарушения</span>
             <input name="category" value="Нарушение правил сообщества">
@@ -520,7 +521,7 @@ function renderBlocking() {
             <button class="btn btn--danger" type="submit">Заблокировать</button>
             ${hasRole('ADMIN') ? '<button class="btn" id="unblock-candidate" type="button">Снять блокировку</button>' : ''}
           </div>
-        </form>
+        </form>` : placeholder('Недостаточно прав', 'Блокировка доступна администратору или участнику, назначенному на текущий этап.')}
       </div>
     </section>
   `;
@@ -547,8 +548,8 @@ function renderStage() {
   const current = currentStage(candidate);
   const rule = current ? stageRule(current.stageId) : null;
   const canSubmit = hasRole('CANDIDATE') && candidate.candidateUserId === state.session.id;
-  const canVerdict = hasRole('INTERVIEWER') || hasRole('ADMIN');
-  const canPickCandidate = !hasRole('CANDIDATE') || hasRole('ADMIN') || hasRole('INTERVIEWER');
+  const canVerdict = hasRole('ADMIN') || isAssignedInterviewer(candidate);
+  const canPickCandidate = hasRole('ADMIN') || !hasRole('CANDIDATE') || candidatesForView('stage').length > 1;
   const submitDisabled = !current || ['SUBMITTED', 'PASSED', 'FAILED'].includes(current.state) || candidate.status === 'BLOCKED';
   const verdictReady = canRecordVerdict(candidate, current, rule);
 
@@ -602,6 +603,10 @@ function renderStageDetails(current, rule) {
       <div class="status-item"><span>Тип</span><strong>${escapeHtml(stageTypeLabels[current.stageType] || current.stageType)}</strong></div>
       <div class="status-item"><span>Попытка</span><strong>${current.attemptNumber} из ${current.attemptLimit}</strong></div>
       <div class="status-item"><span>Срок</span><strong>${rule ? `${rule.dueDays} дн.` : 'не указан'}</strong></div>
+      <div class="status-item">
+        <span>Проверяет</span>
+        <strong>${escapeHtml(userName(current.assignedInterviewerUserId) || 'не назначен')}</strong>
+      </div>
       <div class="status-item stage-details__wide">
         <span>Критерии прохождения</span>
         <strong>${escapeHtml(rule?.criteria || 'Критерии не указаны')}</strong>
@@ -801,7 +806,17 @@ function allowedViews() {
   if (!state.session) {
     return [];
   }
-  return viewDefinitions.filter((definition) => definition.roles.some((role) => hasRole(role)));
+  return viewDefinitions.filter((definition) => canAccessView(definition));
+}
+
+function canAccessView(definition) {
+  if (definition.id === 'stage') {
+    return definition.roles.some((role) => hasRole(role)) || hasAssignedCandidate('stage');
+  }
+  if (definition.id === 'blocking') {
+    return hasRole('ADMIN') || hasAssignedCandidate('blocking');
+  }
+  return definition.roles.some((role) => hasRole(role));
 }
 
 function ensureViewAccess() {
@@ -824,10 +839,27 @@ function candidatesForView(view) {
   if (!state.snapshot) {
     return [];
   }
-  if (view === 'stage' && hasRole('CANDIDATE') && !hasRole('ADMIN') && !hasRole('INTERVIEWER')) {
-    return state.snapshot.candidates.filter((candidate) => candidate.candidateUserId === state.session.id);
+  if (view === 'stage') {
+    return state.snapshot.candidates.filter((candidate) => (
+      hasRole('ADMIN') || isOwnCandidate(candidate) || isAssignedInterviewer(candidate)
+    ));
+  }
+  if (view === 'blocking') {
+    return state.snapshot.candidates.filter((candidate) => hasRole('ADMIN') || isAssignedInterviewer(candidate));
   }
   return state.snapshot.candidates;
+}
+
+function hasAssignedCandidate(view) {
+  return candidatesForView(view).some((candidate) => isAssignedInterviewer(candidate));
+}
+
+function isOwnCandidate(candidate) {
+  return candidate.candidateUserId === state.session?.id;
+}
+
+function isAssignedInterviewer(candidate) {
+  return currentStage(candidate)?.assignedInterviewerUserId === state.session?.id;
 }
 
 function selectedCandidate(view) {

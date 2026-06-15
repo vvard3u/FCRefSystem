@@ -67,9 +67,14 @@ class SelectionControllerTest {
         Integer candidateCount = jdbcTemplate.queryForObject("select count(*) from candidates", Integer.class);
         Integer stageCount = jdbcTemplate.queryForObject("select count(*) from candidate_stage_progress", Integer.class);
         Integer votingCount = jdbcTemplate.queryForObject("select count(*) from voting_sessions", Integer.class);
+        Integer assignedStageCount = jdbcTemplate.queryForObject(
+                "select count(*) from candidate_stage_progress where assigned_interviewer_user_id is not null",
+                Integer.class
+        );
 
         assertThat(candidateCount).isGreaterThan(0);
         assertThat(stageCount).isGreaterThan(0);
+        assertThat(assignedStageCount).isGreaterThan(0);
         assertThat(votingCount).isGreaterThan(0);
     }
 

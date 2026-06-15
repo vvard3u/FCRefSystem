@@ -6,8 +6,11 @@ merge into app_users (id, username, password, display_name, enabled) key(id) val
     ('candidate-user-1', 'candidate', '{noop}candidate', 'Candidate', true);
 
 merge into app_user_roles (user_id, role) key(user_id, role) values
+    ('admin-1', 'MEMBER'),
     ('admin-1', 'ADMIN'),
     ('member-1', 'MEMBER'),
+    ('privileged-1', 'MEMBER'),
     ('privileged-1', 'PRIVILEGED_MEMBER'),
+    ('interviewer-1', 'MEMBER'),
     ('interviewer-1', 'INTERVIEWER'),
     ('candidate-user-1', 'CANDIDATE');

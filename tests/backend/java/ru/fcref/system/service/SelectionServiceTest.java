@@ -63,10 +63,13 @@ class SelectionServiceTest {
 
         ActivationResult result = service.activateInvitation(invitation.getToken(), "Candidate From Test");
         Candidate candidate = result.candidate();
+        String interviewerUserId = candidate.currentStage().orElseThrow().getAssignedInterviewerUserId();
 
         assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.IN_PROGRESS);
         assertThat(candidate.getInvitationId()).isEqualTo(invitation.getId());
         assertThat(candidate.getCandidateUserId()).isNotBlank();
+        assertThat(interviewerUserId).isNotBlank();
+        assertThat(userDirectory.findById(interviewerUserId).orElseThrow().getRoles()).contains(Role.MEMBER);
         assertThat(result.username()).startsWith("candidate");
         assertThat(result.password()).isNotBlank();
         assertThat(userDirectory.findByUsername(result.username()))
@@ -78,11 +81,18 @@ class SelectionServiceTest {
     }
 
     @Test
-    void onlyActiveMemberCanCreateInvitation() {
-        assertThatThrownBy(() -> service.createInvitation("admin-1", "admin invite", "admin-invite"))
+    void candidateCannotCreateInvitation() {
+        assertThatThrownBy(() -> service.createInvitation("candidate-user-1", "candidate invite", "candidate-invite"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("ACCESS_DENIED");
+    }
+
+    @Test
+    void adminCanCreateInvitationAsCommunityMember() {
+        Invitation invitation = service.createInvitation("admin-1", "admin invite", "admin-invite");
+
+        assertThat(invitation.getAuthorUserId()).isEqualTo("admin-1");
     }
 
     @Test
@@ -115,7 +125,7 @@ class SelectionServiceTest {
 
     @Test
     void blockedCandidateCannotSubmitStageResult() {
-        service.blockCandidate("interviewer-1", "candidate-stage", "rules", "reason");
+        service.blockCandidate(assignedInterviewer("candidate-stage"), "candidate-stage", "rules", "reason");
 
         assertThatThrownBy(() -> service.submitStageResult("candidate-user-1", "candidate-stage", "result", "blocked-result"))
                 .isInstanceOf(BusinessRuleException.class)
@@ -145,23 +155,34 @@ class SelectionServiceTest {
     void passedVerdictOpensVotingAndPreventsDuplicateVerdict() {
         service.submitStageResult("candidate-user-1", "candidate-stage", "result", "review-stage-result");
 
-        StageProgress verdict = service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "accepted");
+        String interviewerUserId = assignedInterviewer("candidate-stage");
+        StageProgress verdict = service.recordVerdict(interviewerUserId, "candidate-stage", Verdict.PASSED, "accepted");
         Candidate candidate = candidate("candidate-stage");
 
         assertThat(verdict.getState()).isEqualTo(StageState.PASSED);
         assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.VOTING);
         assertThat(candidate.openVotingSession()).isPresent();
         assertThat(candidate.openVotingSession().orElseThrow().getStatus()).isEqualTo(VoteStatus.OPEN);
-        assertThatThrownBy(() -> service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "again"))
+        assertThatThrownBy(() -> service.recordVerdict(interviewerUserId, "candidate-stage", Verdict.PASSED, "again"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("STAGE_NOT_READY_FOR_VERDICT");
     }
 
     @Test
+    void unassignedMemberCannotRecordVerdict() {
+        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "unassigned-review");
+
+        assertThatThrownBy(() -> service.recordVerdict("member-1", "candidate-stage", Verdict.PASSED, "accepted"))
+                .isInstanceOf(BusinessRuleException.class)
+                .extracting("code")
+                .isEqualTo("ACCESS_DENIED");
+    }
+
+    @Test
     void acceptedVoteAdvancesCandidateToNextStage() {
         service.submitStageResult("candidate-user-1", "candidate-stage", "result", "advance-stage-result");
-        service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "accepted");
+        service.recordVerdict(assignedInterviewer("candidate-stage"), "candidate-stage", Verdict.PASSED, "accepted");
         service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support");
 
         service.closeVote("admin-1", "candidate-stage");
@@ -171,22 +192,25 @@ class SelectionServiceTest {
         assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.IN_PROGRESS);
         assertThat(candidate.currentStage()).isPresent();
         assertThat(candidate.currentStage().orElseThrow().getState()).isEqualTo(StageState.AVAILABLE);
+        assertThat(candidate.currentStage().orElseThrow().getAssignedInterviewerUserId()).isNotBlank();
     }
 
     @Test
     void finalAcceptedVotePromotesCandidateToMember() {
         service.submitStageResult("candidate-user-1", "candidate-stage", "result", "final-stage-result");
-        service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "accepted");
+        service.recordVerdict(assignedInterviewer("candidate-stage"), "candidate-stage", Verdict.PASSED, "accepted");
         service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support task");
         service.closeVote("admin-1", "candidate-stage");
 
-        service.recordVerdict("interviewer-1", "candidate-stage", Verdict.PASSED, "interview accepted");
+        service.recordVerdict(assignedInterviewer("candidate-stage"), "candidate-stage", Verdict.PASSED, "interview accepted");
         service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support interview");
         service.closeVote("admin-1", "candidate-stage");
 
         Candidate candidate = candidate("candidate-stage");
         assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.PASSED);
         assertThat(userDirectory.findById("candidate-user-1").orElseThrow().getRoles()).contains(Role.MEMBER);
+        assertThat(userDirectory.findById("candidate-user-1").orElseThrow().getRoles()).doesNotContain(Role.CANDIDATE);
+        assertThat(userDirectory.findById("member-1").orElseThrow().getRoles()).contains(Role.PRIVILEGED_MEMBER);
     }
 
     private Candidate candidate(String candidateId) {
@@ -196,12 +220,18 @@ class SelectionServiceTest {
                 .orElseThrow();
     }
 
+    private String assignedInterviewer(String candidateId) {
+        return candidate(candidateId).currentStage()
+                .map(StageProgress::getAssignedInterviewerUserId)
+                .orElseThrow();
+    }
+
     private static final class FakeUserDirectory implements UserDirectory {
 
         private final Map<String, UserAccount> users = new LinkedHashMap<>();
 
         private FakeUserDirectory() {
-            users.put("admin-1", new UserAccount("admin-1", "admin", "Administrator", EnumSet.of(Role.ADMIN)));
+            users.put("admin-1", new UserAccount("admin-1", "admin", "Administrator", EnumSet.of(Role.ADMIN, Role.MEMBER)));
             users.put("member-1", new UserAccount("member-1", "member", "Active club member", EnumSet.of(Role.MEMBER)));
             users.put(
                     "privileged-1",
@@ -209,10 +239,18 @@ class SelectionServiceTest {
                             "privileged-1",
                             "privileged",
                             "Privileged club member",
-                            EnumSet.of(Role.PRIVILEGED_MEMBER)
+                            EnumSet.of(Role.MEMBER, Role.PRIVILEGED_MEMBER)
                     )
             );
-            users.put("interviewer-1", new UserAccount("interviewer-1", "interviewer", "Interviewer", EnumSet.of(Role.INTERVIEWER)));
+            users.put(
+                    "interviewer-1",
+                    new UserAccount(
+                            "interviewer-1",
+                            "interviewer",
+                            "Interviewer",
+                            EnumSet.of(Role.INTERVIEWER, Role.MEMBER)
+                    )
+            );
             users.put("candidate-user-1", new UserAccount("candidate-user-1", "candidate", "Candidate", EnumSet.of(Role.CANDIDATE)));
         }
 

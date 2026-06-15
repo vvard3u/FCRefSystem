@@ -76,8 +76,12 @@ create table if not exists candidate_stage_progress (
     verdict varchar(32),
     report text,
     decided_by_user_id varchar(64),
-    decided_at timestamp with time zone
+    decided_at timestamp with time zone,
+    assigned_interviewer_user_id varchar(64)
 );
+
+alter table candidate_stage_progress
+    add column if not exists assigned_interviewer_user_id varchar(64);
 
 create table if not exists voting_sessions (
     id varchar(64) primary key,
