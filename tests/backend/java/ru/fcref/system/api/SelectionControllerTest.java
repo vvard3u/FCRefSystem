@@ -1,5 +1,6 @@
 package ru.fcref.system.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -14,11 +15,17 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = {
         "debug=false",
-        "logging.level.org.springframework=INFO"
+        "logging.level.org.springframework=INFO",
+        "spring.datasource.url=jdbc:h2:mem:fcref-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.datasource.username=sa",
+        "spring.datasource.password=",
+        "spring.sql.init.data-locations=classpath:data-h2.sql"
 })
 @AutoConfigureMockMvc
 class SelectionControllerTest {
@@ -30,6 +37,9 @@ class SelectionControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void protectedApiRequiresBasicAuth() throws Exception {
@@ -50,6 +60,22 @@ class SelectionControllerTest {
                 .andExpect(jsonPath("$.users").isArray())
                 .andExpect(jsonPath("$.candidates").isArray())
                 .andExpect(jsonPath("$.regulations[0].active").value(true));
+    }
+
+    @Test
+    void seededSelectionStateIsPersistedForDatabaseInspection() {
+        Integer candidateCount = jdbcTemplate.queryForObject("select count(*) from candidates", Integer.class);
+        Integer stageCount = jdbcTemplate.queryForObject("select count(*) from candidate_stage_progress", Integer.class);
+        Integer votingCount = jdbcTemplate.queryForObject("select count(*) from voting_sessions", Integer.class);
+        Integer assignedStageCount = jdbcTemplate.queryForObject(
+                "select count(*) from candidate_stage_progress where assigned_interviewer_user_id is not null",
+                Integer.class
+        );
+
+        assertThat(candidateCount).isGreaterThan(0);
+        assertThat(stageCount).isGreaterThan(0);
+        assertThat(assignedStageCount).isGreaterThan(0);
+        assertThat(votingCount).isGreaterThan(0);
     }
 
     @Test

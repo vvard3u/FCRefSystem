@@ -6,7 +6,8 @@
 
 - Java 17;
 - Spring Boot, Spring Security, JDBC;
-- H2 in-memory database for MVP users and roles;
+- PostgreSQL 16 for demo data;
+- H2 in-memory database for automated tests;
 - Maven;
 - REST API over JSON;
 - static HTML/CSS/JS interface served by the backend.
@@ -20,6 +21,18 @@
 - source PDF documents are local-only and ignored by Git.
 
 ## Run
+
+Start PostgreSQL 16 first. The repository includes a local demo compose file:
+
+```bash
+docker compose up -d postgres
+```
+
+Default database settings:
+
+- URL: `jdbc:postgresql://localhost:5432/fcref`
+- user: `fcref`
+- password: `fcref`
 
 ```bash
 ./mvnw package
@@ -42,20 +55,54 @@ The port can be changed with a startup argument:
 java -jar backend/target/fc-ref-system-0.1.0-SNAPSHOT.jar --server.port=8090
 ```
 
+Database settings can be changed with environment variables:
+
+- `DATABASE_URL`
+- `DATABASE_DRIVER`
+- `DATABASE_USERNAME`
+- `DATABASE_PASSWORD`
+
+## Database Inspection
+
+The application mirrors the demo selection state to PostgreSQL tables after every business event.
+
+Useful tables for defense/demo:
+
+- `app_users`, `app_user_roles` - accounts and roles.
+- `invitations` - referral invitations and activation status.
+- `candidates` - candidate status and current stage.
+- `candidate_stage_progress` - stage attempts, submitted results, assigned interviewer and decisions.
+- `voting_sessions`, `votes` - opened votes, thresholds, decisions and member votes.
+- `block_records`, `complaints` - blocking and complaint flow.
+- `selection_events` - chronological audit log.
+
+Example:
+
+```bash
+psql postgresql://fcref:fcref@localhost:5432/fcref
+select id, full_name, status, current_stage_id from candidates;
+select event_type, actor_user_id, candidate_id, occurred_at from selection_events order by occurred_at desc;
+```
+
 ## Demo Users
 
 All passwords are development-only and stored for MVP demonstration.
 
-| Login | Password | Role | Main flow |
+| Login | Password | Roles | Main flow |
 | --- | --- | --- | --- |
 | `member` | `member` | MEMBER | create referral invitation |
-| `admin` | `admin` | ADMIN | manage regulation, open/close voting |
-| `privileged` | `privileged` | PRIVILEGED_MEMBER | vote, create complaint, create invitation |
-| `interviewer` | `interviewer` | INTERVIEWER | block candidate, record verdict |
+| `admin` | `admin` | MEMBER, ADMIN | manage regulation, open/close voting |
+| `privileged` | `privileged` | MEMBER, PRIVILEGED_MEMBER | vote, create complaint, create invitation |
+| `interviewer` | `interviewer` | MEMBER, INTERVIEWER | review assigned stages and block assigned candidates |
 | `candidate` | `candidate` | CANDIDATE | submit current stage result |
 
 Public invitation activation is available without login only on `/activate.html`. Seed token: `bk-seed-active`.
 Activation creates a candidate account and returns a generated login/password in the UI.
+
+Every accepted community participant has the `MEMBER` role. Voting is a separate earned privilege:
+when an invited candidate passes every selection stage, the inviter receives `PRIVILEGED_MEMBER`.
+Interviewers are assigned per candidate stage from active members; the seeded demo stages are preassigned
+to `interviewer` for a predictable defense walkthrough.
 
 ## MVP Scope
 
@@ -64,8 +111,8 @@ Implemented Use Cases:
 - UC-01: member creates referral invitation; candidate activates invitation publicly.
 - UC-02: admin creates active selection regulation.
 - UC-03: privileged member casts a vote; admin opens and closes voting.
-- UC-04: interviewer/admin blocks a candidate; admin unblocks.
-- UC-05: candidate submits current stage result; interviewer/admin records verdict.
+- UC-04: assigned interviewer/admin blocks a candidate; admin unblocks.
+- UC-05: candidate submits current stage result; assigned interviewer/admin records verdict.
 
 Other screens are intentionally minimal and use interface placeholders where the future release scope is not implemented yet.
 

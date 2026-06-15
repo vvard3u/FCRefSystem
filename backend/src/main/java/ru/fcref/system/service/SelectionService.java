@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import ru.fcref.system.config.AppProperties;
@@ -45,6 +46,7 @@ public class SelectionService {
     private final AppProperties properties;
     private final Clock clock;
     private final UserDirectory userDirectory;
+    private final SelectionStateRepository stateRepository;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Map<String, Invitation> invitations = new LinkedHashMap<>();
     private final Map<String, Candidate> candidates = new LinkedHashMap<>();
@@ -62,15 +64,30 @@ public class SelectionService {
     private int votingSessionSequence = 100;
 
     @Autowired
-    public SelectionService(AppProperties properties, UserDirectory userDirectory) {
-        this(properties, userDirectory, Clock.systemUTC());
+    public SelectionService(
+            AppProperties properties,
+            UserDirectory userDirectory,
+            SelectionStateRepository stateRepository
+    ) {
+        this(properties, userDirectory, Clock.systemUTC(), stateRepository);
     }
 
     public SelectionService(AppProperties properties, UserDirectory userDirectory, Clock clock) {
+        this(properties, userDirectory, clock, SelectionStateRepository.noop());
+    }
+
+    public SelectionService(
+            AppProperties properties,
+            UserDirectory userDirectory,
+            Clock clock,
+            SelectionStateRepository stateRepository
+    ) {
         this.properties = properties;
         this.userDirectory = userDirectory;
         this.clock = clock;
+        this.stateRepository = stateRepository;
         seed();
+        stateRepository.replaceSnapshot(snapshot());
     }
 
     public synchronized SelectionSnapshot snapshot() {
@@ -109,7 +126,7 @@ public class SelectionService {
     }
 
     public synchronized Invitation createInvitation(String actorUserId, String comment, String requestId) {
-        UserAccount actor = requireAnyRole(actorUserId, Role.MEMBER, Role.PRIVILEGED_MEMBER);
+        UserAccount actor = requireRole(actorUserId, Role.MEMBER);
         if (requestId != null && !requestId.isBlank()) {
             String key = "invitation:" + actor.getId() + ":" + requestId;
             String existingId = idempotencyIndex.get(key);
@@ -184,13 +201,15 @@ public class SelectionService {
                 CandidateStatus.IN_PROGRESS,
                 firstStage.id()
         );
-        candidate.getStages().add(progressFrom(firstStage, StageState.AVAILABLE, 1));
+        StageProgress firstProgress = progressFrom(firstStage, StageState.AVAILABLE, 1);
+        assignRandomInterviewer(candidate, firstProgress);
+        candidate.getStages().add(firstProgress);
         candidates.put(candidate.getId(), candidate);
         invitation.activate(candidate.getId(), now);
 
         event(EventType.INVITATION_ACTIVATED, null, candidate.getId(), invitation.getId(), Map.of("token", token));
         event(EventType.CANDIDATE_REGISTERED, null, candidate.getId(), candidate.getId(), Map.of("fullName", candidate.getFullName()));
-        event(EventType.STAGE_ASSIGNED, null, candidate.getId(), firstStage.id(), Map.of("stageName", firstStage.name()));
+        event(EventType.STAGE_ASSIGNED, null, candidate.getId(), firstStage.id(), stageAssignedDetails(firstStage, firstProgress));
         return new ActivationResult(candidate, candidateUsername, candidatePassword);
     }
 
@@ -251,6 +270,7 @@ public class SelectionService {
             idempotencyIndex.put(key, current.getId());
         }
         current.submit(result.trim(), now());
+        candidate.setStatus(CandidateStatus.IN_REVIEW);
         event(
                 EventType.STAGE_RESULT_SUBMITTED,
                 actor.getId(),
@@ -262,20 +282,24 @@ public class SelectionService {
     }
 
     public synchronized StageProgress recordVerdict(String actorUserId, String candidateId, Verdict verdict, String report) {
-        requireAnyRole(actorUserId, Role.INTERVIEWER, Role.ADMIN);
+        UserAccount actor = requireUser(actorUserId);
         Objects.requireNonNull(verdict, "verdict");
         requireText(report, "report", "Отчет по вердикту обязателен");
         Candidate candidate = requireCandidate(candidateId);
         ensureCandidateCanMove(candidate);
         StageProgress current = requireCurrentStage(candidate);
+        requireAssignedInterviewerOrAdmin(actor, current);
+        SelectionStage stage = requireActiveStage(current.getStageId());
+        ensureStageReadyForVerdict(current, stage);
         current.decide(verdict, report.trim(), actorUserId, now());
 
         if (verdict == Verdict.PASSED) {
             current.setState(StageState.PASSED);
-            advanceCandidate(candidate, actorUserId);
+            openVotingForCurrentStage(candidate, actorUserId);
         } else if (verdict == Verdict.RETRY && current.getAttemptNumber() < current.getAttemptLimit()) {
             current.setAttemptNumber(current.getAttemptNumber() + 1);
             current.setState(StageState.RETRY);
+            candidate.setStatus(CandidateStatus.IN_PROGRESS);
         } else {
             current.setState(StageState.FAILED);
             candidate.setStatus(CandidateStatus.FAILED);
@@ -300,14 +324,7 @@ public class SelectionService {
             return existing.get();
         }
 
-        StageProgress current = requireCurrentStage(candidate);
-        SelectionStage stage = requireActiveStage(current.getStageId());
-        int threshold = stage.thresholdPercent() != null ? stage.thresholdPercent() : 60;
-        candidate.setStatus(CandidateStatus.VOTING);
-        VotingSession session = createVotingSession(actorUserId, threshold);
-        candidate.getVotingSessions().add(session);
-        event(EventType.VOTE_OPENED, actorUserId, candidate.getId(), session.getId(), Map.of("thresholdPercent", threshold));
-        return session;
+        return openVotingForCurrentStage(candidate, actorUserId);
     }
 
     public synchronized Vote castVote(String actorUserId, String candidateId, VoteChoice choice, String reason) {
@@ -376,10 +393,11 @@ public class SelectionService {
     }
 
     public synchronized BlockRecord blockCandidate(String actorUserId, String candidateId, String category, String reason) {
-        requireAnyRole(actorUserId, Role.INTERVIEWER, Role.ADMIN);
+        UserAccount actor = requireUser(actorUserId);
         requireText(category, "category", "Категория блокировки обязательна");
         requireText(reason, "reason", "Причина блокировки обязательна");
         Candidate candidate = requireCandidate(candidateId);
+        requireAssignedInterviewerOrAdmin(actor, requireCurrentStage(candidate));
         if (candidate.getStatus() == CandidateStatus.BLOCKED) {
             throw new BusinessRuleException("CANDIDATE_ALREADY_BLOCKED", "Кандидат уже заблокирован");
         }
@@ -432,24 +450,21 @@ public class SelectionService {
     }
 
     private List<Candidate> visibleCandidates(UserAccount viewer) {
-        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
             return List.copyOf(candidates.values());
         }
-        if (viewer.hasRole(Role.MEMBER)) {
+        if (viewer.hasRole(Role.MEMBER) || viewer.hasRole(Role.CANDIDATE)) {
             return candidates.values().stream()
-                    .filter(candidate -> viewer.getId().equals(candidate.getInvitedByUserId()))
-                    .toList();
-        }
-        if (viewer.hasRole(Role.CANDIDATE)) {
-            return candidates.values().stream()
-                    .filter(candidate -> viewer.getId().equals(candidate.getCandidateUserId()))
+                    .filter(candidate -> viewer.getId().equals(candidate.getInvitedByUserId())
+                            || viewer.getId().equals(candidate.getCandidateUserId())
+                            || isCurrentStageAssignedTo(candidate, viewer.getId()))
                     .toList();
         }
         return List.of();
     }
 
     private List<Invitation> visibleInvitations(UserAccount viewer) {
-        if (viewer.hasRole(Role.MEMBER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.MEMBER)) {
             return invitations.values().stream()
                     .filter(invitation -> viewer.getId().equals(invitation.getAuthorUserId()))
                     .toList();
@@ -462,7 +477,7 @@ public class SelectionService {
             List<Candidate> visibleCandidates,
             List<Invitation> visibleInvitations
     ) {
-        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
             return userDirectory.listUsers();
         }
 
@@ -474,6 +489,11 @@ public class SelectionService {
                 .forEach(userIds::add);
         visibleCandidates.stream()
                 .map(Candidate::getCandidateUserId)
+                .filter(Objects::nonNull)
+                .forEach(userIds::add);
+        visibleCandidates.stream()
+                .flatMap(candidate -> candidate.getStages().stream())
+                .map(StageProgress::getAssignedInterviewerUserId)
                 .filter(Objects::nonNull)
                 .forEach(userIds::add);
         visibleInvitations.stream()
@@ -503,7 +523,7 @@ public class SelectionService {
             Set<String> visibleCandidateIds,
             Set<String> visibleInvitationIds
     ) {
-        if (viewer.hasRole(Role.INTERVIEWER) || viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
+        if (viewer.hasRole(Role.PRIVILEGED_MEMBER)) {
             return true;
         }
         if (viewer.hasRole(Role.CANDIDATE) && isInternalCandidateEvent(event.type())) {
@@ -562,7 +582,7 @@ public class SelectionService {
                 "Петрова Мария Сергеевна",
                 null,
                 activatedInvitation.getId(),
-                "voting",
+                "task",
                 CandidateStatus.VOTING
         );
         seedCandidate(
@@ -583,7 +603,7 @@ public class SelectionService {
         );
 
         Candidate votingCandidate = candidates.get("candidate-vote");
-        VotingSession session = createVotingSession("admin-1", 60);
+        VotingSession session = createVotingSession("admin-1", votingCandidate.getCurrentStageId(), 60);
         votingCandidate.getVotingSessions().add(session);
     }
 
@@ -608,7 +628,7 @@ public class SelectionService {
         for (SelectionStage stage : activeRegulation().getStages()) {
             StageState state;
             if (stage.id().equals(currentStageId)) {
-                state = StageState.AVAILABLE;
+                state = status == CandidateStatus.VOTING ? StageState.PASSED : StageState.AVAILABLE;
             } else if (stageOrder(stage.id()) < stageOrder(currentStageId)) {
                 state = StageState.PASSED;
             } else {
@@ -616,6 +636,7 @@ public class SelectionService {
             }
             candidate.getStages().add(progressFrom(stage, state, 1));
         }
+        assignSeedInterviewer(candidate);
         candidates.put(candidate.getId(), candidate);
     }
 
@@ -623,8 +644,16 @@ public class SelectionService {
         return List.of(
                 new SelectionStage("form", "Анкета кандидата", StageType.FORM, 1, 7, null, "Заполненная анкета", true),
                 new SelectionStage("task", "Первое испытание", StageType.TASK, 2, 7, 70, "Результат задания не ниже порога", true),
-                new SelectionStage("interview", "Интервью с наставником", StageType.INTERVIEW, 1, 5, null, "Отчет интервьюера", false),
-                new SelectionStage("voting", "Голосование участников", StageType.VOTE, 1, 3, 60, "Не менее 60% голосов поддержки", false)
+                new SelectionStage(
+                        "interview",
+                        "Интервью с наставником",
+                        StageType.INTERVIEW,
+                        1,
+                        5,
+                        60,
+                        "Отчет интервьюера и голоса участников",
+                        false
+                )
         );
     }
 
@@ -641,15 +670,82 @@ public class SelectionService {
         );
     }
 
-    private VotingSession createVotingSession(String actorUserId, int thresholdPercent) {
+    private void assignSeedInterviewer(Candidate candidate) {
+        StageProgress current = requireCurrentStage(candidate);
+        Optional<UserAccount> demoInterviewer = userDirectory.findById("interviewer-1")
+                .filter(user -> user.hasRole(Role.MEMBER));
+        if (demoInterviewer.isPresent()) {
+            current.assignInterviewer(demoInterviewer.get().getId());
+            return;
+        }
+        assignRandomInterviewer(candidate, current);
+    }
+
+    private void assignRandomInterviewer(Candidate candidate, StageProgress progress) {
+        progress.assignInterviewer(selectRandomInterviewerUserId(candidate));
+    }
+
+    private String selectRandomInterviewerUserId(Candidate candidate) {
+        List<UserAccount> eligibleMembers = eligibleInterviewers(candidate, true);
+        if (eligibleMembers.isEmpty()) {
+            eligibleMembers = eligibleInterviewers(candidate, false);
+        }
+        if (eligibleMembers.isEmpty()) {
+            throw new BusinessRuleException(
+                    "INTERVIEWER_NOT_AVAILABLE",
+                    "No active community members available for interviewer assignment"
+            );
+        }
+        return eligibleMembers.get(secureRandom.nextInt(eligibleMembers.size())).getId();
+    }
+
+    private List<UserAccount> eligibleInterviewers(Candidate candidate, boolean avoidConflicts) {
+        return userDirectory.listUsers().stream()
+                .filter(user -> user.hasRole(Role.MEMBER))
+                .filter(user -> !user.getId().equals(candidate.getCandidateUserId()))
+                .filter(user -> !avoidConflicts || !user.getId().equals(candidate.getInvitedByUserId()))
+                .filter(user -> !avoidConflicts || !user.hasRole(Role.ADMIN))
+                .sorted(Comparator.comparing(UserAccount::getId))
+                .toList();
+    }
+
+    private Map<String, Object> stageAssignedDetails(SelectionStage stage, StageProgress progress) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("stageName", stage.name());
+        details.put("interviewerUserId", progress.getAssignedInterviewerUserId());
+        return details;
+    }
+
+    private VotingSession createVotingSession(String actorUserId, String stageId, int thresholdPercent) {
         votingSessionSequence++;
         return new VotingSession(
                 "voting-" + votingSessionSequence,
+                stageId,
                 actorUserId,
                 now(),
                 now().plus(3, ChronoUnit.DAYS),
                 thresholdPercent
         );
+    }
+
+    private VotingSession openVotingForCurrentStage(Candidate candidate, String actorUserId) {
+        Optional<VotingSession> existing = candidate.openVotingSession();
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        StageProgress current = requireCurrentStage(candidate);
+        if (current.getState() != StageState.PASSED) {
+            throw new BusinessRuleException("STAGE_NOT_READY_FOR_VOTING", "Этап должен быть пройден до открытия голосования");
+        }
+
+        SelectionStage stage = requireActiveStage(current.getStageId());
+        int threshold = stage.thresholdPercent() != null ? stage.thresholdPercent() : 60;
+        candidate.setStatus(CandidateStatus.VOTING);
+        VotingSession session = createVotingSession(actorUserId, current.getStageId(), threshold);
+        candidate.getVotingSessions().add(session);
+        event(EventType.VOTE_OPENED, actorUserId, candidate.getId(), session.getId(), Map.of("thresholdPercent", threshold));
+        return session;
     }
 
     private void advanceCandidate(Candidate candidate, String actorUserId) {
@@ -663,6 +759,7 @@ public class SelectionService {
         }
         if (currentIndex < 0 || currentIndex == stages.size() - 1) {
             candidate.setStatus(CandidateStatus.PASSED);
+            promoteCandidateToMember(candidate, actorUserId);
             return;
         }
 
@@ -678,10 +775,17 @@ public class SelectionService {
                 });
         nextProgress.setState(StageState.AVAILABLE);
         candidate.setStatus(nextStage.type() == StageType.VOTE ? CandidateStatus.VOTING : CandidateStatus.IN_PROGRESS);
-        event(EventType.STAGE_ASSIGNED, actorUserId, candidate.getId(), nextStage.id(), Map.of("stageName", nextStage.name()));
+        assignRandomInterviewer(candidate, nextProgress);
+        event(
+                EventType.STAGE_ASSIGNED,
+                actorUserId,
+                candidate.getId(),
+                nextStage.id(),
+                stageAssignedDetails(nextStage, nextProgress)
+        );
         if (nextStage.type() == StageType.VOTE && candidate.openVotingSession().isEmpty()) {
             int thresholdPercent = nextStage.thresholdPercent() != null ? nextStage.thresholdPercent() : 60;
-            VotingSession session = createVotingSession(actorUserId, thresholdPercent);
+            VotingSession session = createVotingSession(actorUserId, nextStage.id(), thresholdPercent);
             candidate.getVotingSessions().add(session);
             event(
                     EventType.VOTE_OPENED,
@@ -691,6 +795,70 @@ public class SelectionService {
                     Map.of("thresholdPercent", session.getThresholdPercent())
             );
         }
+    }
+
+    private void ensureStageReadyForVerdict(StageProgress current, SelectionStage stage) {
+        if (stage.requiresSubmission() && current.getState() != StageState.SUBMITTED) {
+            throw new BusinessRuleException("STAGE_NOT_READY_FOR_VERDICT", "Сначала кандидат должен отправить результат этапа");
+        }
+        if (!stage.requiresSubmission()
+                && current.getState() != StageState.AVAILABLE
+                && current.getState() != StageState.RETRY) {
+            throw new BusinessRuleException("STAGE_NOT_READY_FOR_VERDICT", "Этап уже обработан или ожидает другого действия");
+        }
+    }
+
+    private void promoteCandidateToMember(Candidate candidate, String actorUserId) {
+        promoteCandidateAccount(candidate, actorUserId);
+        rewardInviterWithPrivilegedStatus(candidate, actorUserId);
+    }
+
+    private void promoteCandidateAccount(Candidate candidate, String actorUserId) {
+        if (candidate.getCandidateUserId() == null) {
+            return;
+        }
+        UserAccount account = userDirectory.findById(candidate.getCandidateUserId()).orElse(null);
+        if (account == null) {
+            return;
+        }
+        if (!account.hasRole(Role.MEMBER)) {
+            userDirectory.assignRole(candidate.getCandidateUserId(), Role.MEMBER);
+            event(
+                    EventType.ROLE_ASSIGNED,
+                    actorUserId,
+                    candidate.getId(),
+                    candidate.getCandidateUserId(),
+                    Map.of("role", Role.MEMBER.name())
+            );
+        }
+        if (account.hasRole(Role.CANDIDATE)) {
+            userDirectory.revokeRole(candidate.getCandidateUserId(), Role.CANDIDATE);
+            event(
+                    EventType.ROLE_REVOKED,
+                    actorUserId,
+                    candidate.getId(),
+                    candidate.getCandidateUserId(),
+                    Map.of("role", Role.CANDIDATE.name())
+            );
+        }
+    }
+
+    private void rewardInviterWithPrivilegedStatus(Candidate candidate, String actorUserId) {
+        if (candidate.getInvitedByUserId() == null) {
+            return;
+        }
+        UserAccount inviter = userDirectory.findById(candidate.getInvitedByUserId()).orElse(null);
+        if (inviter == null || inviter.hasRole(Role.PRIVILEGED_MEMBER)) {
+            return;
+        }
+        userDirectory.assignRole(candidate.getInvitedByUserId(), Role.PRIVILEGED_MEMBER);
+        event(
+                EventType.ROLE_ASSIGNED,
+                actorUserId,
+                candidate.getId(),
+                candidate.getInvitedByUserId(),
+                Map.of("role", Role.PRIVILEGED_MEMBER.name(), "reason", "SUCCESSFUL_REFERRAL")
+        );
     }
 
     private void validateRegulationStages(List<SelectionStage> stages) {
@@ -734,6 +902,20 @@ public class SelectionService {
         }
     }
 
+    private void requireAssignedInterviewerOrAdmin(UserAccount actor, StageProgress current) {
+        if (actor.hasRole(Role.ADMIN) || actor.getId().equals(current.getAssignedInterviewerUserId())) {
+            return;
+        }
+        throw new BusinessRuleException("ACCESS_DENIED", "Недостаточно прав для выполнения действия");
+    }
+
+    private boolean isCurrentStageAssignedTo(Candidate candidate, String userId) {
+        return candidate.currentStage()
+                .map(StageProgress::getAssignedInterviewerUserId)
+                .map(userId::equals)
+                .orElse(false);
+    }
+
     private StageProgress requireCurrentStage(Candidate candidate) {
         return candidate.currentStage()
                 .orElseThrow(() -> new BusinessRuleException("CURRENT_STAGE_NOT_FOUND", "Текущий этап кандидата не найден"));
@@ -761,16 +943,6 @@ public class SelectionService {
             }
         }
         return Integer.MAX_VALUE;
-    }
-
-    private UserAccount requireAnyRole(String actorUserId, Role... roles) {
-        UserAccount user = requireUser(actorUserId);
-        for (Role role : roles) {
-            if (user.hasRole(role)) {
-                return user;
-            }
-        }
-        throw new BusinessRuleException("ACCESS_DENIED", "Недостаточно прав для выполнения действия");
     }
 
     private UserAccount requireRole(String actorUserId, Role role) {
@@ -804,7 +976,18 @@ public class SelectionService {
 
     private void event(EventType type, String actorUserId, String candidateId, String aggregateId, Map<String, Object> details) {
         eventSequence++;
-        events.add(new EventRecord("event-" + eventSequence, type, actorUserId, candidateId, aggregateId, details, now()));
+        EventRecord event = new EventRecord(
+                "event-" + UUID.randomUUID(),
+                type,
+                actorUserId,
+                candidateId,
+                aggregateId,
+                details,
+                now()
+        );
+        events.add(event);
+        stateRepository.recordEvent(event);
+        stateRepository.replaceSnapshot(snapshot());
     }
 
     private String generatePassword() {

@@ -3,7 +3,7 @@ const viewDefinitions = [
     id: 'invitations',
     label: 'Приглашения',
     title: 'Создание реферального приглашения',
-    roles: ['MEMBER', 'PRIVILEGED_MEMBER']
+    roles: ['MEMBER']
   },
   {
     id: 'regulation',
@@ -21,13 +21,13 @@ const viewDefinitions = [
     id: 'blocking',
     label: 'Блокировка',
     title: 'Блокировка кандидата',
-    roles: ['INTERVIEWER', 'ADMIN']
+    roles: ['ADMIN']
   },
   {
     id: 'stage',
     label: 'Этап отбора',
     title: 'Прохождение этапа отбора',
-    roles: ['CANDIDATE', 'INTERVIEWER', 'ADMIN']
+    roles: ['CANDIDATE', 'ADMIN']
   },
   {
     id: 'journal',
@@ -58,6 +58,7 @@ const roleLabels = {
 const statusLabels = {
   REGISTERED: 'Зарегистрирован',
   IN_PROGRESS: 'В процессе',
+  IN_REVIEW: 'На проверке',
   VOTING: 'Голосование',
   PASSED: 'Прошел',
   FAILED: 'Не прошел',
@@ -429,9 +430,11 @@ function renderVoting() {
     return emptyCandidatePanel();
   }
   const current = currentStage(candidate);
-  const session = candidate.votingSessions.find((item) => item.status === 'OPEN') || candidate.votingSessions.at(-1);
+  const openSession = candidate.votingSessions.find((item) => item.status === 'OPEN');
+  const session = openSession || candidate.votingSessions.at(-1);
   const canManageVoting = hasRole('ADMIN');
   const canVote = hasRole('PRIVILEGED_MEMBER');
+  const canOpenVote = canManageVoting && !openSession && current?.state === 'PASSED';
   const votePanel = canVote ? `
     <div class="panel">
       <h2>Голос</h2>
@@ -471,8 +474,8 @@ function renderVoting() {
         </div>
         ${canManageVoting ? `
           <div class="actions toolbar">
-            <button class="btn" type="button" id="open-vote">Открыть голосование</button>
-            <button class="btn" type="button" id="close-vote" ${session?.status === 'OPEN' ? '' : 'disabled'}>Закрыть голосование</button>
+            <button class="btn" type="button" id="open-vote" ${canOpenVote ? '' : 'disabled'}>Открыть голосование</button>
+            <button class="btn" type="button" id="close-vote" ${openSession ? '' : 'disabled'}>Закрыть голосование</button>
           </div>
         ` : ''}
       </div>
@@ -495,6 +498,7 @@ function renderBlocking() {
   if (!candidate) {
     return emptyCandidatePanel();
   }
+  const canBlock = hasRole('ADMIN') || isAssignedInterviewer(candidate);
   return `
     <section class="grid grid--two">
       <div class="panel">
@@ -504,7 +508,7 @@ function renderBlocking() {
       </div>
       <div class="panel">
         <h2>Блокировка</h2>
-        <form id="block-form">
+        ${canBlock ? `<form id="block-form">
           <label class="field">
             <span>Категория нарушения</span>
             <input name="category" value="Нарушение правил сообщества">
@@ -517,7 +521,7 @@ function renderBlocking() {
             <button class="btn btn--danger" type="submit">Заблокировать</button>
             ${hasRole('ADMIN') ? '<button class="btn" id="unblock-candidate" type="button">Снять блокировку</button>' : ''}
           </div>
-        </form>
+        </form>` : placeholder('Недостаточно прав', 'Блокировка доступна администратору или участнику, назначенному на текущий этап.')}
       </div>
     </section>
   `;
@@ -544,9 +548,10 @@ function renderStage() {
   const current = currentStage(candidate);
   const rule = current ? stageRule(current.stageId) : null;
   const canSubmit = hasRole('CANDIDATE') && candidate.candidateUserId === state.session.id;
-  const canVerdict = hasRole('INTERVIEWER') || hasRole('ADMIN');
-  const canPickCandidate = !hasRole('CANDIDATE') || hasRole('ADMIN') || hasRole('INTERVIEWER');
+  const canVerdict = hasRole('ADMIN') || isAssignedInterviewer(candidate);
+  const canPickCandidate = hasRole('ADMIN') || !hasRole('CANDIDATE') || candidatesForView('stage').length > 1;
   const submitDisabled = !current || ['SUBMITTED', 'PASSED', 'FAILED'].includes(current.state) || candidate.status === 'BLOCKED';
+  const verdictReady = canRecordVerdict(candidate, current, rule);
 
   return `
     <section class="grid grid--two">
@@ -565,7 +570,7 @@ function renderStage() {
         ` : ''}
       </div>
       <div class="panel">
-        <h2>Вердикт</h2>
+        <h2>Результат проверки</h2>
         ${canVerdict ? `
           <form id="verdict-form">
             <label class="field">
@@ -580,7 +585,7 @@ function renderStage() {
               <span>Отчет интервьюера</span>
               <textarea name="report">Результат проверен, решение зафиксировано</textarea>
             </label>
-            <button class="btn" type="submit">Зафиксировать вердикт</button>
+            <button class="btn" type="submit" ${verdictReady ? '' : 'disabled'}>Зафиксировать результат</button>
           </form>
         ` : renderCandidateResult(current)}
       </div>
@@ -598,6 +603,10 @@ function renderStageDetails(current, rule) {
       <div class="status-item"><span>Тип</span><strong>${escapeHtml(stageTypeLabels[current.stageType] || current.stageType)}</strong></div>
       <div class="status-item"><span>Попытка</span><strong>${current.attemptNumber} из ${current.attemptLimit}</strong></div>
       <div class="status-item"><span>Срок</span><strong>${rule ? `${rule.dueDays} дн.` : 'не указан'}</strong></div>
+      <div class="status-item">
+        <span>Проверяет</span>
+        <strong>${escapeHtml(userName(current.assignedInterviewerUserId) || 'не назначен')}</strong>
+      </div>
       <div class="status-item stage-details__wide">
         <span>Критерии прохождения</span>
         <strong>${escapeHtml(rule?.criteria || 'Критерии не указаны')}</strong>
@@ -622,6 +631,16 @@ function renderCandidateResult(current) {
       <p class="muted">${escapeHtml(current.report || '')}</p>
     </div>
   `;
+}
+
+function canRecordVerdict(candidate, current, rule) {
+  if (!candidate || !current || ['BLOCKED', 'PASSED', 'FAILED', 'VOTING'].includes(candidate.status)) {
+    return false;
+  }
+  if (rule?.requiresSubmission) {
+    return current.state === 'SUBMITTED';
+  }
+  return current.state === 'AVAILABLE' || current.state === 'RETRY';
 }
 
 function renderJournal() {
@@ -787,7 +806,17 @@ function allowedViews() {
   if (!state.session) {
     return [];
   }
-  return viewDefinitions.filter((definition) => definition.roles.some((role) => hasRole(role)));
+  return viewDefinitions.filter((definition) => canAccessView(definition));
+}
+
+function canAccessView(definition) {
+  if (definition.id === 'stage') {
+    return definition.roles.some((role) => hasRole(role)) || hasAssignedCandidate('stage');
+  }
+  if (definition.id === 'blocking') {
+    return hasRole('ADMIN') || hasAssignedCandidate('blocking');
+  }
+  return definition.roles.some((role) => hasRole(role));
 }
 
 function ensureViewAccess() {
@@ -810,10 +839,27 @@ function candidatesForView(view) {
   if (!state.snapshot) {
     return [];
   }
-  if (view === 'stage' && hasRole('CANDIDATE') && !hasRole('ADMIN') && !hasRole('INTERVIEWER')) {
-    return state.snapshot.candidates.filter((candidate) => candidate.candidateUserId === state.session.id);
+  if (view === 'stage') {
+    return state.snapshot.candidates.filter((candidate) => (
+      hasRole('ADMIN') || isOwnCandidate(candidate) || isAssignedInterviewer(candidate)
+    ));
+  }
+  if (view === 'blocking') {
+    return state.snapshot.candidates.filter((candidate) => hasRole('ADMIN') || isAssignedInterviewer(candidate));
   }
   return state.snapshot.candidates;
+}
+
+function hasAssignedCandidate(view) {
+  return candidatesForView(view).some((candidate) => isAssignedInterviewer(candidate));
+}
+
+function isOwnCandidate(candidate) {
+  return candidate.candidateUserId === state.session?.id;
+}
+
+function isAssignedInterviewer(candidate) {
+  return currentStage(candidate)?.assignedInterviewerUserId === state.session?.id;
 }
 
 function selectedCandidate(view) {
@@ -857,6 +903,7 @@ function nextActionFor(candidate, current) {
   if (candidate.status === 'BLOCKED') return 'Остановлен';
   if (candidate.status === 'PASSED') return 'Завершен';
   if (candidate.status === 'FAILED') return 'Завершен';
+  if (candidate.status === 'IN_REVIEW') return 'Проверка результата';
   if (!current) return 'Назначить этап';
   if (candidate.status === 'VOTING') return 'Голосование';
   if (current.state === 'SUBMITTED') return 'Вердикт';

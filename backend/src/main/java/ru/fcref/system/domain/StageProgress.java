@@ -17,6 +17,7 @@ public class StageProgress {
     private String report;
     private String decidedByUserId;
     private Instant decidedAt;
+    private String assignedInterviewerUserId;
 
     public StageProgress(
             String id,
@@ -84,6 +85,10 @@ public class StageProgress {
         this.submittedResult = submittedResult;
         this.submittedAt = submittedAt;
         this.state = StageState.SUBMITTED;
+        this.verdict = null;
+        this.report = null;
+        this.decidedByUserId = null;
+        this.decidedAt = null;
     }
 
     public Verdict getVerdict() {
@@ -100,6 +105,14 @@ public class StageProgress {
 
     public Instant getDecidedAt() {
         return decidedAt;
+    }
+
+    public String getAssignedInterviewerUserId() {
+        return assignedInterviewerUserId;
+    }
+
+    public void assignInterviewer(String assignedInterviewerUserId) {
+        this.assignedInterviewerUserId = assignedInterviewerUserId;
     }
 
     public void decide(Verdict verdict, String report, String decidedByUserId, Instant decidedAt) {

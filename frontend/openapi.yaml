@@ -94,7 +94,7 @@ paths:
               $ref: "#/components/schemas/RecordVerdictRequest"
       responses:
         "200":
-          description: Verdict saved by INTERVIEWER or ADMIN.
+          description: Verdict saved by assigned interviewer or ADMIN.
   /api/candidates/{candidateId}/voting:
     post:
       summary: Open voting
@@ -152,7 +152,7 @@ paths:
               $ref: "#/components/schemas/BlockCandidateRequest"
       responses:
         "200":
-          description: Candidate blocked by INTERVIEWER or ADMIN.
+          description: Candidate blocked by assigned interviewer or ADMIN.
 components:
   securitySchemes:
     basicAuth:
