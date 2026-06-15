@@ -23,6 +23,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class SelectionControllerTest {
 
+    private static final String ADMIN_AUTH = basic("admin", "admin");
+    private static final String CANDIDATE_AUTH = basic("candidate", "candidate");
     private static final String MEMBER_AUTH = basic("member", "member");
     private static final String PRIVILEGED_AUTH = basic("privileged", "privileged");
 
@@ -36,12 +38,35 @@ class SelectionControllerTest {
     }
 
     @Test
-    void snapshotReturnsSeededMvpStateForAuthenticatedUser() throws Exception {
-        mockMvc.perform(get("/api/snapshot").header(HttpHeaders.AUTHORIZATION, MEMBER_AUTH))
+    void publicActivationPageIsAvailableWithoutBasicAuth() throws Exception {
+        mockMvc.perform(get("/activate.html"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void adminSnapshotReturnsFullSeededMvpState() throws Exception {
+        mockMvc.perform(get("/api/snapshot").header(HttpHeaders.AUTHORIZATION, ADMIN_AUTH))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.users").isArray())
                 .andExpect(jsonPath("$.candidates").isArray())
                 .andExpect(jsonPath("$.regulations[0].active").value(true));
+    }
+
+    @Test
+    void candidateSnapshotContainsOnlyOwnCandidateFlow() throws Exception {
+        mockMvc.perform(get("/api/snapshot").header(HttpHeaders.AUTHORIZATION, CANDIDATE_AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.invitations.length()").value(0))
+                .andExpect(jsonPath("$.candidates.length()").value(1))
+                .andExpect(jsonPath("$.candidates[0].id").value("candidate-stage"));
+    }
+
+    @Test
+    void memberSnapshotDoesNotExposeRegulationManagementData() throws Exception {
+        mockMvc.perform(get("/api/snapshot").header(HttpHeaders.AUTHORIZATION, MEMBER_AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.invitations").isArray())
+                .andExpect(jsonPath("$.regulations.length()").value(1));
     }
 
     @Test

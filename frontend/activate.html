@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Активация приглашения</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="activation-shell">
+    <section class="panel activation-panel">
+      <div class="brand activation-brand">
+        <img src="/assets/logo.svg" alt="" class="brand__mark">
+        <div>
+          <strong>FCRefSystem</strong>
+          <span>Вступление в клуб</span>
+        </div>
+      </div>
+      <h1>Активация приглашения</h1>
+      <form id="activation-form">
+        <label class="field">
+          <span>Токен приглашения</span>
+          <input name="token" autocomplete="off" required>
+        </label>
+        <label class="field">
+          <span>ФИО кандидата</span>
+          <input name="fullName" autocomplete="name" required>
+        </label>
+        <div class="actions">
+          <button class="btn btn--good" type="submit">Активировать</button>
+          <a class="btn" href="/">Войти в систему</a>
+        </div>
+      </form>
+      <div id="activation-result"></div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/activate.js"></script>
+</body>
+</html>

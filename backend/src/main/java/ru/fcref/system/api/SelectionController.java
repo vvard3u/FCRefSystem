@@ -44,8 +44,8 @@ public class SelectionController {
     }
 
     @GetMapping("/snapshot")
-    public SelectionSnapshot snapshot() {
-        return service.snapshot();
+    public SelectionSnapshot snapshot(Authentication authentication) {
+        return service.snapshotFor(currentUserService.requireCurrent(authentication));
     }
 
     @PostMapping("/invitations")

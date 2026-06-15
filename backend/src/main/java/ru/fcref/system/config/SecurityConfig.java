@@ -25,7 +25,16 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/", "/index.html", "/app.js", "/styles.css", "/assets/**", "/openapi.yaml").permitAll()
+                        .requestMatchers(
+                                "/",
+                                "/index.html",
+                                "/app.js",
+                                "/activate.html",
+                                "/activate.js",
+                                "/styles.css",
+                                "/assets/**",
+                                "/openapi.yaml"
+                        ).permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/invitations/activate").permitAll()
                         .requestMatchers("/api/**").authenticated()

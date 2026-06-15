@@ -84,6 +84,24 @@ class SelectionServiceTest {
     }
 
     @Test
+    void privilegedMemberCanCreateInvitationAsClubMember() {
+        Invitation invitation = service.createInvitation("privileged-1", "privileged invite", "privileged-invite");
+
+        assertThat(invitation.getAuthorUserId()).isEqualTo("privileged-1");
+        assertThat(invitation.getStatus().name()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void candidateSnapshotContainsOnlyOwnedCandidate() {
+        UserAccount candidate = userDirectory.findById("candidate-user-1").orElseThrow();
+
+        SelectionSnapshot snapshot = service.snapshotFor(candidate);
+
+        assertThat(snapshot.invitations()).isEmpty();
+        assertThat(snapshot.candidates()).extracting(Candidate::getId).containsExactly("candidate-stage");
+    }
+
+    @Test
     void privilegedMemberCanVoteOnlyOncePerOpenVoting() {
         service.castVote("privileged-1", "candidate-vote", VoteChoice.SUPPORT, "Support");
 
@@ -110,6 +128,14 @@ class SelectionServiceTest {
 
         assertThat(duplicate.getId()).isEqualTo(first.getId());
         assertThat(duplicate.getState()).isEqualTo(StageState.SUBMITTED);
+    }
+
+    @Test
+    void adminCannotSubmitStageResultForCandidate() {
+        assertThatThrownBy(() -> service.submitStageResult("admin-1", "candidate-stage", "result", "admin-stage-result"))
+                .isInstanceOf(BusinessRuleException.class)
+                .extracting("code")
+                .isEqualTo("ACCESS_DENIED");
     }
 
     private static final class FakeUserDirectory implements UserDirectory {

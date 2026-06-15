@@ -31,6 +31,7 @@ On Windows PowerShell use `.\mvnw.cmd` instead of `./mvnw`.
 After startup:
 
 - UI: `http://localhost:8080/`
+- candidate invitation activation: `http://localhost:8080/activate.html`
 - health: `http://localhost:8080/actuator/health`
 - OpenAPI: `http://localhost:8080/openapi.yaml`
 - protected API example: `curl -u member:member http://localhost:8080/api/snapshot`
@@ -45,15 +46,15 @@ java -jar backend/target/fc-ref-system-0.1.0-SNAPSHOT.jar --server.port=8090
 
 All passwords are development-only and stored for MVP demonstration.
 
-| Login | Password | Role | Main UC |
+| Login | Password | Role | Main flow |
 | --- | --- | --- | --- |
-| `member` | `member` | MEMBER | UC-01 create invitation |
-| `admin` | `admin` | ADMIN | UC-02 manage regulation, open/close voting |
-| `privileged` | `privileged` | PRIVILEGED_MEMBER | UC-03 vote, create complaint |
-| `interviewer` | `interviewer` | INTERVIEWER | UC-04 block candidate, record verdict |
-| `candidate` | `candidate` | CANDIDATE | UC-05 submit stage result |
+| `member` | `member` | MEMBER | create referral invitation |
+| `admin` | `admin` | ADMIN | manage regulation, open/close voting |
+| `privileged` | `privileged` | PRIVILEGED_MEMBER | vote, create complaint, create invitation |
+| `interviewer` | `interviewer` | INTERVIEWER | block candidate, record verdict |
+| `candidate` | `candidate` | CANDIDATE | submit current stage result |
 
-Public invitation activation is available without login. Seed token: `bk-seed-active`.
+Public invitation activation is available without login only on `/activate.html`. Seed token: `bk-seed-active`.
 Activation creates a candidate account and returns a generated login/password in the UI.
 
 ## MVP Scope
