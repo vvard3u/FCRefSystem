@@ -5,6 +5,5 @@ public enum Role {
     MEMBER,
     PRIVILEGED_MEMBER,
     MODERATOR,
-    INTERVIEWER,
     ADMIN
 }

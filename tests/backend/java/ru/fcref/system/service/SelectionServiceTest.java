@@ -49,12 +49,23 @@ class SelectionServiceTest {
     void createInvitationUsesQuotaAndIdempotencyKey() {
         Invitation first = service.createInvitation("member-1", "first", "same-request");
         Invitation duplicate = service.createInvitation("member-1", "first", "same-request");
+        Invitation second = service.createInvitation("member-1", "second", "another-request");
 
         assertThat(duplicate.getId()).isEqualTo(first.getId());
-        assertThatThrownBy(() -> service.createInvitation("member-1", "second", "another-request"))
+        assertThat(second.getId()).isNotEqualTo(first.getId());
+        assertThatThrownBy(() -> service.createInvitation("member-1", "third", "third-request"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("INVITATION_QUOTA_EXHAUSTED");
+    }
+
+    @Test
+    void initialSnapshotHasNoSeedCandidatesOrInvitations() {
+        SelectionSnapshot snapshot = service.snapshot();
+
+        assertThat(snapshot.invitations()).isEmpty();
+        assertThat(snapshot.candidates()).isEmpty();
+        assertThat(snapshot.regulations()).hasSize(1);
     }
 
     @Test
@@ -69,7 +80,10 @@ class SelectionServiceTest {
         assertThat(candidate.getInvitationId()).isEqualTo(invitation.getId());
         assertThat(candidate.getCandidateUserId()).isNotBlank();
         assertThat(interviewerUserId).isNotBlank();
-        assertThat(userDirectory.findById(interviewerUserId).orElseThrow().getRoles()).contains(Role.MEMBER);
+        assertThat(userDirectory.findById(interviewerUserId).orElseThrow().getRoles())
+                .contains(Role.MEMBER, Role.PRIVILEGED_MEMBER)
+                .doesNotContain(Role.ADMIN);
+        assertThat(interviewerUserId).isNotEqualTo("member-1");
         assertThat(result.username()).startsWith("candidate");
         assertThat(result.password()).isNotBlank();
         assertThat(userDirectory.findByUsername(result.username()))
@@ -82,7 +96,9 @@ class SelectionServiceTest {
 
     @Test
     void candidateCannotCreateInvitation() {
-        assertThatThrownBy(() -> service.createInvitation("candidate-user-1", "candidate invite", "candidate-invite"))
+        Candidate candidate = activateCandidate();
+
+        assertThatThrownBy(() -> service.createInvitation(candidate.getCandidateUserId(), "candidate invite", "candidate-invite"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("ACCESS_DENIED");
@@ -105,19 +121,23 @@ class SelectionServiceTest {
 
     @Test
     void candidateSnapshotContainsOnlyOwnedCandidate() {
-        UserAccount candidate = userDirectory.findById("candidate-user-1").orElseThrow();
+        Candidate activatedCandidate = activateCandidate();
+        UserAccount candidate = userDirectory.findById(activatedCandidate.getCandidateUserId()).orElseThrow();
 
         SelectionSnapshot snapshot = service.snapshotFor(candidate);
 
         assertThat(snapshot.invitations()).isEmpty();
-        assertThat(snapshot.candidates()).extracting(Candidate::getId).containsExactly("candidate-stage");
+        assertThat(snapshot.candidates()).extracting(Candidate::getId).containsExactly(activatedCandidate.getId());
     }
 
     @Test
     void privilegedMemberCanVoteOnlyOncePerOpenVoting() {
-        service.castVote("privileged-1", "candidate-vote", VoteChoice.SUPPORT, "Support");
+        Candidate candidate = activateCandidate();
+        moveCandidateToVoting(candidate);
 
-        assertThatThrownBy(() -> service.castVote("privileged-1", "candidate-vote", VoteChoice.REJECT, "Changed my mind"))
+        service.castVote("privileged-1", candidate.getId(), VoteChoice.SUPPORT, "Support");
+
+        assertThatThrownBy(() -> service.castVote("privileged-1", candidate.getId(), VoteChoice.REJECT, "Changed my mind"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("VOTE_ALREADY_CAST");
@@ -125,9 +145,10 @@ class SelectionServiceTest {
 
     @Test
     void blockedCandidateCannotSubmitStageResult() {
-        service.blockCandidate(assignedInterviewer("candidate-stage"), "candidate-stage", "rules", "reason");
+        Candidate candidate = activateCandidate();
+        service.blockCandidate(assignedInterviewer(candidate.getId()), candidate.getId(), "rules", "reason");
 
-        assertThatThrownBy(() -> service.submitStageResult("candidate-user-1", "candidate-stage", "result", "blocked-result"))
+        assertThatThrownBy(() -> service.submitStageResult(candidate.getCandidateUserId(), candidate.getId(), "result", "blocked-result"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("CANDIDATE_STATUS_LOCKED");
@@ -135,17 +156,30 @@ class SelectionServiceTest {
 
     @Test
     void stageSubmissionIsIdempotentForSameRequestId() {
-        StageProgress first = service.submitStageResult("candidate-user-1", "candidate-stage", "result", "same-stage-result");
-        StageProgress duplicate = service.submitStageResult("candidate-user-1", "candidate-stage", "result", "same-stage-result");
+        Candidate candidate = activateCandidate();
+        StageProgress first = service.submitStageResult(
+                candidate.getCandidateUserId(),
+                candidate.getId(),
+                "result",
+                "same-stage-result"
+        );
+        StageProgress duplicate = service.submitStageResult(
+                candidate.getCandidateUserId(),
+                candidate.getId(),
+                "result",
+                "same-stage-result"
+        );
 
         assertThat(duplicate.getId()).isEqualTo(first.getId());
         assertThat(duplicate.getState()).isEqualTo(StageState.SUBMITTED);
-        assertThat(candidate("candidate-stage").getStatus()).isEqualTo(CandidateStatus.IN_REVIEW);
+        assertThat(candidate(candidate.getId()).getStatus()).isEqualTo(CandidateStatus.IN_REVIEW);
     }
 
     @Test
     void adminCannotSubmitStageResultForCandidate() {
-        assertThatThrownBy(() -> service.submitStageResult("admin-1", "candidate-stage", "result", "admin-stage-result"))
+        Candidate candidate = activateCandidate();
+
+        assertThatThrownBy(() -> service.submitStageResult("admin-1", candidate.getId(), "result", "admin-stage-result"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("ACCESS_DENIED");
@@ -153,17 +187,18 @@ class SelectionServiceTest {
 
     @Test
     void passedVerdictOpensVotingAndPreventsDuplicateVerdict() {
-        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "review-stage-result");
+        Candidate candidate = activateCandidate();
+        service.submitStageResult(candidate.getCandidateUserId(), candidate.getId(), "result", "review-stage-result");
 
-        String interviewerUserId = assignedInterviewer("candidate-stage");
-        StageProgress verdict = service.recordVerdict(interviewerUserId, "candidate-stage", Verdict.PASSED, "accepted");
-        Candidate candidate = candidate("candidate-stage");
+        String interviewerUserId = assignedInterviewer(candidate.getId());
+        StageProgress verdict = service.recordVerdict(interviewerUserId, candidate.getId(), Verdict.PASSED, "accepted");
+        Candidate updatedCandidate = candidate(candidate.getId());
 
         assertThat(verdict.getState()).isEqualTo(StageState.PASSED);
-        assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.VOTING);
-        assertThat(candidate.openVotingSession()).isPresent();
-        assertThat(candidate.openVotingSession().orElseThrow().getStatus()).isEqualTo(VoteStatus.OPEN);
-        assertThatThrownBy(() -> service.recordVerdict(interviewerUserId, "candidate-stage", Verdict.PASSED, "again"))
+        assertThat(updatedCandidate.getStatus()).isEqualTo(CandidateStatus.VOTING);
+        assertThat(updatedCandidate.openVotingSession()).isPresent();
+        assertThat(updatedCandidate.openVotingSession().orElseThrow().getStatus()).isEqualTo(VoteStatus.OPEN);
+        assertThatThrownBy(() -> service.recordVerdict(interviewerUserId, candidate.getId(), Verdict.PASSED, "again"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("STAGE_NOT_READY_FOR_VERDICT");
@@ -171,9 +206,10 @@ class SelectionServiceTest {
 
     @Test
     void unassignedMemberCannotRecordVerdict() {
-        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "unassigned-review");
+        Candidate candidate = activateCandidate();
+        service.submitStageResult(candidate.getCandidateUserId(), candidate.getId(), "result", "unassigned-review");
 
-        assertThatThrownBy(() -> service.recordVerdict("member-1", "candidate-stage", Verdict.PASSED, "accepted"))
+        assertThatThrownBy(() -> service.recordVerdict("member-1", candidate.getId(), Verdict.PASSED, "accepted"))
                 .isInstanceOf(BusinessRuleException.class)
                 .extracting("code")
                 .isEqualTo("ACCESS_DENIED");
@@ -181,36 +217,57 @@ class SelectionServiceTest {
 
     @Test
     void acceptedVoteAdvancesCandidateToNextStage() {
-        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "advance-stage-result");
-        service.recordVerdict(assignedInterviewer("candidate-stage"), "candidate-stage", Verdict.PASSED, "accepted");
-        service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support");
+        Candidate candidate = activateCandidate();
+        service.submitStageResult(candidate.getCandidateUserId(), candidate.getId(), "result", "advance-stage-result");
+        service.recordVerdict(assignedInterviewer(candidate.getId()), candidate.getId(), Verdict.PASSED, "accepted");
+        service.castVote("privileged-1", candidate.getId(), VoteChoice.SUPPORT, "support");
 
-        service.closeVote("admin-1", "candidate-stage");
-        Candidate candidate = candidate("candidate-stage");
+        service.closeVote("admin-1", candidate.getId());
+        Candidate updatedCandidate = candidate(candidate.getId());
 
-        assertThat(candidate.getCurrentStageId()).isEqualTo("interview");
-        assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.IN_PROGRESS);
-        assertThat(candidate.currentStage()).isPresent();
-        assertThat(candidate.currentStage().orElseThrow().getState()).isEqualTo(StageState.AVAILABLE);
-        assertThat(candidate.currentStage().orElseThrow().getAssignedInterviewerUserId()).isNotBlank();
+        assertThat(updatedCandidate.getCurrentStageId()).isEqualTo("task");
+        assertThat(updatedCandidate.getStatus()).isEqualTo(CandidateStatus.IN_PROGRESS);
+        assertThat(updatedCandidate.currentStage()).isPresent();
+        assertThat(updatedCandidate.currentStage().orElseThrow().getState()).isEqualTo(StageState.AVAILABLE);
+        assertThat(updatedCandidate.currentStage().orElseThrow().getAssignedInterviewerUserId()).isNotBlank();
     }
 
     @Test
     void finalAcceptedVotePromotesCandidateToMember() {
-        service.submitStageResult("candidate-user-1", "candidate-stage", "result", "final-stage-result");
-        service.recordVerdict(assignedInterviewer("candidate-stage"), "candidate-stage", Verdict.PASSED, "accepted");
-        service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support task");
-        service.closeVote("admin-1", "candidate-stage");
+        Candidate candidate = activateCandidate();
+        service.submitStageResult(candidate.getCandidateUserId(), candidate.getId(), "result", "final-stage-result");
+        service.recordVerdict(assignedInterviewer(candidate.getId()), candidate.getId(), Verdict.PASSED, "accepted");
+        service.castVote("privileged-1", candidate.getId(), VoteChoice.SUPPORT, "support task");
+        service.closeVote("admin-1", candidate.getId());
 
-        service.recordVerdict(assignedInterviewer("candidate-stage"), "candidate-stage", Verdict.PASSED, "interview accepted");
-        service.castVote("privileged-1", "candidate-stage", VoteChoice.SUPPORT, "support interview");
-        service.closeVote("admin-1", "candidate-stage");
+        service.submitStageResult(candidate.getCandidateUserId(), candidate.getId(), "task result", "final-task-result");
+        service.recordVerdict(assignedInterviewer(candidate.getId()), candidate.getId(), Verdict.PASSED, "task accepted");
+        service.castVote("privileged-1", candidate.getId(), VoteChoice.SUPPORT, "support task stage");
+        service.closeVote("admin-1", candidate.getId());
 
-        Candidate candidate = candidate("candidate-stage");
-        assertThat(candidate.getStatus()).isEqualTo(CandidateStatus.PASSED);
-        assertThat(userDirectory.findById("candidate-user-1").orElseThrow().getRoles()).contains(Role.MEMBER);
-        assertThat(userDirectory.findById("candidate-user-1").orElseThrow().getRoles()).doesNotContain(Role.CANDIDATE);
+        service.recordVerdict(assignedInterviewer(candidate.getId()), candidate.getId(), Verdict.PASSED, "interview accepted");
+        service.castVote("privileged-1", candidate.getId(), VoteChoice.SUPPORT, "support interview");
+        service.closeVote("admin-1", candidate.getId());
+
+        Candidate updatedCandidate = candidate(candidate.getId());
+        assertThat(updatedCandidate.getStatus()).isEqualTo(CandidateStatus.PASSED);
+        assertThat(userDirectory.findById(candidate.getCandidateUserId()).orElseThrow().getRoles()).contains(Role.MEMBER);
+        assertThat(userDirectory.findById(candidate.getCandidateUserId()).orElseThrow().getRoles()).doesNotContain(Role.CANDIDATE);
         assertThat(userDirectory.findById("member-1").orElseThrow().getRoles()).contains(Role.PRIVILEGED_MEMBER);
+    }
+
+    private Candidate activateCandidate() {
+        return activateCandidateResult().candidate();
+    }
+
+    private ActivationResult activateCandidateResult() {
+        Invitation invitation = service.createInvitation("member-1", "candidate", "activate-candidate");
+        return service.activateInvitation(invitation.getToken(), "Candidate From Test");
+    }
+
+    private void moveCandidateToVoting(Candidate candidate) {
+        service.submitStageResult(candidate.getCandidateUserId(), candidate.getId(), "result", "move-to-voting");
+        service.recordVerdict(assignedInterviewer(candidate.getId()), candidate.getId(), Verdict.PASSED, "accepted");
     }
 
     private Candidate candidate(String candidateId) {
@@ -243,15 +300,14 @@ class SelectionServiceTest {
                     )
             );
             users.put(
-                    "interviewer-1",
+                    "privileged-2",
                     new UserAccount(
-                            "interviewer-1",
-                            "interviewer",
-                            "Interviewer",
-                            EnumSet.of(Role.INTERVIEWER, Role.MEMBER)
+                            "privileged-2",
+                            "privileged2",
+                            "Second privileged club member",
+                            EnumSet.of(Role.MEMBER, Role.PRIVILEGED_MEMBER)
                     )
             );
-            users.put("candidate-user-1", new UserAccount("candidate-user-1", "candidate", "Candidate", EnumSet.of(Role.CANDIDATE)));
         }
 
         @Override
