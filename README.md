@@ -92,17 +92,18 @@ All passwords are development-only and stored for MVP demonstration.
 | --- | --- | --- | --- |
 | `member` | `member` | MEMBER | create referral invitation |
 | `admin` | `admin` | MEMBER, ADMIN | manage regulation, open/close voting |
-| `privileged` | `privileged` | MEMBER, PRIVILEGED_MEMBER | vote, create complaint, create invitation |
-| `interviewer` | `interviewer` | MEMBER, INTERVIEWER | review assigned stages and block assigned candidates |
-| `candidate` | `candidate` | CANDIDATE | submit current stage result |
+| `privileged` | `privileged` | MEMBER, PRIVILEGED_MEMBER | vote, create complaint, create invitation, review assigned stages |
+| `privileged2` | `privileged2` | MEMBER, PRIVILEGED_MEMBER | vote, create complaint, create invitation, review assigned stages |
 
-Public invitation activation is available without login only on `/activate.html`. Seed token: `bk-seed-active`.
+The demo starts without invitations, candidates, voting sessions or candidate accounts.
+Create an invitation as `member`, open the generated activation link, and activate it as a candidate.
+Public invitation activation is available without login only on `/activate.html`.
 Activation creates a candidate account and returns a generated login/password in the UI.
 
 Every accepted community participant has the `MEMBER` role. Voting is a separate earned privilege:
 when an invited candidate passes every selection stage, the inviter receives `PRIVILEGED_MEMBER`.
-Interviewers are assigned per candidate stage from active members; the seeded demo stages are preassigned
-to `interviewer` for a predictable defense walkthrough.
+Interviewers are assigned per candidate stage from active privileged members. There is no separate
+interviewer login; use the privileged user shown in the candidate stage details.
 
 ## MVP Scope
 
@@ -122,7 +123,7 @@ Other screens are intentionally minimal and use interface placeholders where the
 ./mvnw test
 ```
 
-Tests cover domain rules, Basic Auth API access, seeded MVP state and public invitation activation.
+Tests cover domain rules, Basic Auth API access, clean MVP state and public invitation activation.
 
 ## Lint
 

@@ -50,7 +50,6 @@ const roleLabels = {
   ADMIN: 'Администратор',
   MEMBER: 'Участник клуба',
   PRIVILEGED_MEMBER: 'Привилегированный участник',
-  INTERVIEWER: 'Интервьюер',
   CANDIDATE: 'Кандидат',
   MODERATOR: 'Модератор'
 };
@@ -114,9 +113,9 @@ const state = {
   voteChoice: 'SUPPORT',
   lastInvitation: null,
   selectedCandidates: {
-    voting: 'candidate-vote',
-    blocking: 'candidate-block',
-    stage: 'candidate-stage'
+    voting: '',
+    blocking: '',
+    stage: ''
   }
 };
 
@@ -286,9 +285,8 @@ function renderLoginContent() {
         <div class="demo-users">
           ${demoUser('member', 'member', 'Создает приглашения')}
           ${demoUser('privileged', 'privileged', 'Создает приглашения и голосует')}
-          ${demoUser('interviewer', 'interviewer', 'Проверяет этапы и блокирует кандидатов')}
+          ${demoUser('privileged2', 'privileged2', 'Проверяет назначенные этапы и голосует')}
           ${demoUser('admin', 'admin', 'Управляет регламентом и голосованием')}
-          ${demoUser('candidate', 'candidate', 'Проходит назначенный этап')}
         </div>
       </div>
       <div class="panel">

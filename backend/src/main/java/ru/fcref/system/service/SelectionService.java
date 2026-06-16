@@ -555,89 +555,6 @@ public class SelectionService {
         );
         regulations.put(defaultRegulation.getId(), defaultRegulation);
 
-        Invitation activeInvitation = new Invitation(
-                "inv-seed-active",
-                "bk-seed-active",
-                "member-1",
-                "Приглашение кандидата по рекомендации участника",
-                now().minus(1, ChronoUnit.DAYS),
-                now().plus(properties.getInvitationTtlDays() - 1L, ChronoUnit.DAYS),
-                InvitationStatus.ACTIVE
-        );
-        invitations.put(activeInvitation.getId(), activeInvitation);
-
-        Invitation activatedInvitation = new Invitation(
-                "inv-seed-activated",
-                "bk-seed-activated",
-                "member-1",
-                "Активированное приглашение",
-                now().minus(5, ChronoUnit.DAYS),
-                now().plus(25, ChronoUnit.DAYS),
-                InvitationStatus.ACTIVATED
-        );
-        invitations.put(activatedInvitation.getId(), activatedInvitation);
-
-        seedCandidate(
-                "candidate-vote",
-                "Петрова Мария Сергеевна",
-                null,
-                activatedInvitation.getId(),
-                "task",
-                CandidateStatus.VOTING
-        );
-        seedCandidate(
-                "candidate-block",
-                "Смирнова Анна Сергеевна",
-                null,
-                activatedInvitation.getId(),
-                "interview",
-                CandidateStatus.IN_PROGRESS
-        );
-        seedCandidate(
-                "candidate-stage",
-                "Кузнецов Иван Андреевич",
-                "candidate-user-1",
-                activatedInvitation.getId(),
-                "task",
-                CandidateStatus.IN_PROGRESS
-        );
-
-        Candidate votingCandidate = candidates.get("candidate-vote");
-        VotingSession session = createVotingSession("admin-1", votingCandidate.getCurrentStageId(), 60);
-        votingCandidate.getVotingSessions().add(session);
-    }
-
-    private void seedCandidate(
-            String id,
-            String fullName,
-            String candidateUserId,
-            String invitationId,
-            String currentStageId,
-            CandidateStatus status
-    ) {
-        Candidate candidate = new Candidate(
-                id,
-                fullName,
-                candidateUserId,
-                invitationId,
-                "member-1",
-                now().minus(3, ChronoUnit.DAYS),
-                status,
-                currentStageId
-        );
-        for (SelectionStage stage : activeRegulation().getStages()) {
-            StageState state;
-            if (stage.id().equals(currentStageId)) {
-                state = status == CandidateStatus.VOTING ? StageState.PASSED : StageState.AVAILABLE;
-            } else if (stageOrder(stage.id()) < stageOrder(currentStageId)) {
-                state = StageState.PASSED;
-            } else {
-                state = StageState.WAITING;
-            }
-            candidate.getStages().add(progressFrom(stage, state, 1));
-        }
-        assignSeedInterviewer(candidate);
-        candidates.put(candidate.getId(), candidate);
     }
 
     private List<SelectionStage> defaultStages() {
@@ -670,17 +587,6 @@ public class SelectionService {
         );
     }
 
-    private void assignSeedInterviewer(Candidate candidate) {
-        StageProgress current = requireCurrentStage(candidate);
-        Optional<UserAccount> demoInterviewer = userDirectory.findById("interviewer-1")
-                .filter(user -> user.hasRole(Role.MEMBER));
-        if (demoInterviewer.isPresent()) {
-            current.assignInterviewer(demoInterviewer.get().getId());
-            return;
-        }
-        assignRandomInterviewer(candidate, current);
-    }
-
     private void assignRandomInterviewer(Candidate candidate, StageProgress progress) {
         progress.assignInterviewer(selectRandomInterviewerUserId(candidate));
     }
@@ -692,8 +598,8 @@ public class SelectionService {
         }
         if (eligibleMembers.isEmpty()) {
             throw new BusinessRuleException(
-                    "INTERVIEWER_NOT_AVAILABLE",
-                    "No active community members available for interviewer assignment"
+                    "PRIVILEGED_INTERVIEWER_NOT_AVAILABLE",
+                    "No active privileged members available for interviewer assignment"
             );
         }
         return eligibleMembers.get(secureRandom.nextInt(eligibleMembers.size())).getId();
@@ -702,6 +608,7 @@ public class SelectionService {
     private List<UserAccount> eligibleInterviewers(Candidate candidate, boolean avoidConflicts) {
         return userDirectory.listUsers().stream()
                 .filter(user -> user.hasRole(Role.MEMBER))
+                .filter(user -> user.hasRole(Role.PRIVILEGED_MEMBER))
                 .filter(user -> !user.getId().equals(candidate.getCandidateUserId()))
                 .filter(user -> !avoidConflicts || !user.getId().equals(candidate.getInvitedByUserId()))
                 .filter(user -> !avoidConflicts || !user.hasRole(Role.ADMIN))
